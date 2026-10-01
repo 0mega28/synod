@@ -60,8 +60,14 @@ Two proposers at once breaks progress (livelock) but never safety.
 Acceptor must record its decision in storage before sending the response.
 With a bare majority, one acceptor forgetting is enough to lose a chosen value.
 
-Each Proposer must record the highest proposal number that it has issued.
-TODO: why? What goes wrong after a restart if it forgets?
+Proposal numbers must be unique across nodes, and any node must be able to
+go higher than any number it has seen. Proposal number is (round, node_id),
+compared round first, node_id breaks ties.
+After a reject with (7, node 3), the node uses (8, own_id).
+
+Each Proposer must record the highest round that it has issued, in storage,
+before sending the prepare request. node_id is fixed, so only the round.
+Otherwise a restart can reuse a number: (6, x) and (6, y) from the same node.
 
 ---
 
