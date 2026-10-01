@@ -42,7 +42,6 @@ crates/
   synod/          consensus core
   synod-island/   deterministic simulator (arrives in M7)
 docs/
-  decisions/      design decision records
   learning-log.md running notes: surprises and open questions
 ```
 
