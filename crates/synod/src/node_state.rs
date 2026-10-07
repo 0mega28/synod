@@ -173,6 +173,7 @@ mod tests {
                 },
             ))
         );
+        assert!(output.persist);
     }
 
     #[test]
@@ -188,6 +189,8 @@ mod tests {
             output.reply,
             Some((NodeId(1), Message::Reject { promised: pn(2, 2) }))
         );
+        assert_eq!(output.new_acceptor_state, acceptor);
+        assert!(!output.persist);
     }
 
     #[test]
@@ -203,6 +206,8 @@ mod tests {
             output.reply,
             Some((NodeId(1), Message::Reject { promised: pn(2, 2) }))
         );
+        assert_eq!(output.new_acceptor_state, acceptor);
+        assert!(!output.persist);
     }
 
     #[test]
@@ -224,6 +229,7 @@ mod tests {
                 },
             ))
         );
+        assert!(output.persist);
     }
 
     #[test]
@@ -249,6 +255,7 @@ mod tests {
                 value: "x",
             })
         );
+        assert!(!output.persist);
     }
 
     #[test]
@@ -265,38 +272,6 @@ mod tests {
                 },
             ))
         );
-    }
-
-    #[test]
-    fn duplicate_prepare_leaves_state_unchanged() {
-        let acceptor = fresh()
-            .transition(NodeId(1), prepare(pn(1, 1)))
-            .new_acceptor_state;
-
-        let output = acceptor.transition(NodeId(1), prepare(pn(1, 1)));
-
-        assert_eq!(output.new_acceptor_state, acceptor);
-    }
-
-    #[test]
-    fn duplicate_accept_leaves_state_unchanged() {
-        let acceptor = fresh()
-            .transition(NodeId(1), accept(pn(1, 1), "x"))
-            .new_acceptor_state;
-
-        let output = acceptor.transition(NodeId(1), accept(pn(1, 1), "x"));
-
-        assert_eq!(output.new_acceptor_state, acceptor);
-    }
-
-    #[test]
-    fn reject_leaves_state_unchanged() {
-        let acceptor = fresh()
-            .transition(NodeId(2), prepare(pn(2, 2)))
-            .new_acceptor_state;
-
-        let output = acceptor.transition(NodeId(1), prepare(pn(1, 1)));
-
-        assert_eq!(output.new_acceptor_state, acceptor);
+        assert!(output.persist);
     }
 }
