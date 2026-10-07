@@ -38,7 +38,6 @@ pub enum Message<V> {
     },
     Promise {
         proposal_number: ProposalNumber,
-        from: NodeId,
         accepted: Option<AcceptedProposal<V>>,
     },
     Reject {
@@ -51,7 +50,6 @@ pub enum Message<V> {
     Accepted {
         proposal_number: ProposalNumber,
         value: V,
-        from: NodeId,
     },
 }
 

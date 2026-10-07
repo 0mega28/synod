@@ -1,7 +1,7 @@
 use crate::message::{AcceptedProposal, Message, NodeId, ProposalNumber};
 use std::cmp::Ordering;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Acceptor<V> {
     pub promised: Option<ProposalNumber>,
     pub accepted_proposal: Option<AcceptedProposal<V>>,
@@ -12,9 +12,15 @@ pub struct Proposer {
     pub highest_proposal_number: Option<ProposalNumber>,
 }
 
-#[allow(dead_code)]
+#[derive(Debug)]
+pub struct AcceptorOutput<V> {
+    pub new_acceptor_state: Acceptor<V>,
+    pub reply: Option<(NodeId, Message<V>)>,
+    pub persist: bool,
+}
+
 impl<V: Clone> Acceptor<V> {
-    fn transition(&self, message: Message<V>, node_id: NodeId) -> (Self, Option<Message<V>>) {
+    pub fn transition(&self, sender_node_id: NodeId, message: Message<V>) -> AcceptorOutput<V> {
         let Acceptor {
             promised,
             accepted_proposal,
@@ -23,36 +29,46 @@ impl<V: Clone> Acceptor<V> {
             Message::Prepare { proposal_number } => {
                 if let Some(promised) = promised {
                     return match promised.cmp(&proposal_number) {
-                        Ordering::Less | Ordering::Equal => (
-                            Acceptor {
+                        Ordering::Less | Ordering::Equal => AcceptorOutput {
+                            new_acceptor_state: Acceptor {
                                 promised: Some(proposal_number),
                                 accepted_proposal: accepted_proposal.clone(),
                             },
-                            Some(Message::Promise {
-                                proposal_number,
-                                from: node_id,
-                                accepted: accepted_proposal.clone(),
-                            }),
-                        ),
-                        Ordering::Greater => (
-                            self.clone(),
-                            Some(Message::Reject {
-                                promised: *promised,
-                            }),
-                        ),
+                            reply: Some((
+                                sender_node_id,
+                                Message::Promise {
+                                    proposal_number,
+                                    accepted: accepted_proposal.clone(),
+                                },
+                            )),
+                            persist: true,
+                        },
+                        Ordering::Greater => AcceptorOutput {
+                            new_acceptor_state: self.clone(),
+                            reply: Some((
+                                sender_node_id,
+                                Message::Reject {
+                                    promised: *promised,
+                                },
+                            )),
+                            persist: false,
+                        },
                     };
                 }
-                (
-                    Acceptor {
+                AcceptorOutput {
+                    new_acceptor_state: Acceptor {
                         promised: Some(proposal_number),
                         accepted_proposal: accepted_proposal.clone(),
                     },
-                    Some(Message::Promise {
-                        proposal_number,
-                        from: node_id,
-                        accepted: accepted_proposal.clone(),
-                    }),
-                )
+                    reply: Some((
+                        sender_node_id,
+                        Message::Promise {
+                            proposal_number,
+                            accepted: accepted_proposal.clone(),
+                        },
+                    )),
+                    persist: true,
+                }
             }
             Message::Accept {
                 proposal_number,
@@ -61,27 +77,34 @@ impl<V: Clone> Acceptor<V> {
                 if let Some(promised) = promised
                     && *promised > proposal_number
                 {
-                    return (
-                        self.clone(),
-                        Some(Message::Reject {
-                            promised: *promised,
-                        }),
-                    );
+                    return AcceptorOutput {
+                        new_acceptor_state: self.clone(),
+                        reply: Some((
+                            sender_node_id,
+                            Message::Reject {
+                                promised: *promised,
+                            },
+                        )),
+                        persist: false,
+                    };
                 }
-                (
-                    Acceptor {
+                AcceptorOutput {
+                    new_acceptor_state: Acceptor {
                         promised: Some(proposal_number),
                         accepted_proposal: Some(AcceptedProposal {
                             proposal_number,
                             value: value.clone(),
                         }),
                     },
-                    Some(Message::Accepted {
-                        proposal_number,
-                        value,
-                        from: node_id,
-                    }),
-                )
+                    reply: Some((
+                        sender_node_id,
+                        Message::Accepted {
+                            proposal_number,
+                            value,
+                        },
+                    )),
+                    persist: true,
+                }
             }
             Message::Promise { .. } => {
                 unreachable!("Acceptor shouldn't receive Promise messages");
@@ -107,160 +130,120 @@ mod tests {
         }
     }
 
-    #[test]
-    fn promise_reports_previously_accepted_proposal() {
-        let me = NodeId(0);
-        let acceptor: Acceptor<&str> = Acceptor {
+    fn fresh() -> Acceptor<&'static str> {
+        Acceptor {
             promised: None,
             accepted_proposal: None,
-        };
+        }
+    }
 
-        let (acceptor, _) = acceptor.transition(
-            Message::Prepare {
-                proposal_number: pn(1, 1),
-            },
-            me,
-        );
-        let (acceptor, _) = acceptor.transition(
-            Message::Accept {
-                proposal_number: pn(1, 1),
-                value: "x",
-            },
-            me,
-        );
-        let (_, reply) = acceptor.transition(
-            Message::Prepare {
-                proposal_number: pn(2, 2),
-            },
-            me,
-        );
+    fn prepare(proposal_number: ProposalNumber) -> Message<&'static str> {
+        Message::Prepare { proposal_number }
+    }
+
+    fn accept(proposal_number: ProposalNumber, value: &'static str) -> Message<&'static str> {
+        Message::Accept {
+            proposal_number,
+            value,
+        }
+    }
+
+    #[test]
+    fn promise_reports_previously_accepted_proposal() {
+        let acceptor = fresh();
+
+        let acceptor = acceptor
+            .transition(NodeId(1), prepare(pn(1, 1)))
+            .new_acceptor_state;
+        let acceptor = acceptor
+            .transition(NodeId(1), accept(pn(1, 1), "x"))
+            .new_acceptor_state;
+        let output = acceptor.transition(NodeId(2), prepare(pn(2, 2)));
 
         assert_eq!(
-            reply,
-            Some(Message::Promise {
-                proposal_number: pn(2, 2),
-                from: me,
-                accepted: Some(AcceptedProposal {
-                    proposal_number: pn(1, 1),
-                    value: "x",
-                }),
-            })
+            output.reply,
+            Some((
+                NodeId(2),
+                Message::Promise {
+                    proposal_number: pn(2, 2),
+                    accepted: Some(AcceptedProposal {
+                        proposal_number: pn(1, 1),
+                        value: "x",
+                    }),
+                },
+            ))
         );
     }
 
     #[test]
     fn lower_prepare_after_promise_is_rejected() {
-        let me = NodeId(0);
-        let acceptor: Acceptor<&str> = Acceptor {
-            promised: None,
-            accepted_proposal: None,
-        };
+        let acceptor = fresh();
 
-        let (acceptor, _) = acceptor.transition(
-            Message::Prepare {
-                proposal_number: pn(2, 2),
-            },
-            me,
-        );
-        let (_, reply) = acceptor.transition(
-            Message::Prepare {
-                proposal_number: pn(1, 1),
-            },
-            me,
-        );
+        let acceptor = acceptor
+            .transition(NodeId(2), prepare(pn(2, 2)))
+            .new_acceptor_state;
+        let output = acceptor.transition(NodeId(1), prepare(pn(1, 1)));
 
-        assert_eq!(reply, Some(Message::Reject { promised: pn(2, 2) }));
+        assert_eq!(
+            output.reply,
+            Some((NodeId(1), Message::Reject { promised: pn(2, 2) }))
+        );
     }
 
     #[test]
     fn accept_below_promise_is_rejected() {
-        let me = NodeId(0);
-        let acceptor: Acceptor<&str> = Acceptor {
-            promised: None,
-            accepted_proposal: None,
-        };
+        let acceptor = fresh();
 
-        let (acceptor, _) = acceptor.transition(
-            Message::Prepare {
-                proposal_number: pn(2, 2),
-            },
-            me,
-        );
-        let (_, reply) = acceptor.transition(
-            Message::Accept {
-                proposal_number: pn(1, 1),
-                value: "x",
-            },
-            me,
-        );
+        let acceptor = acceptor
+            .transition(NodeId(2), prepare(pn(2, 2)))
+            .new_acceptor_state;
+        let output = acceptor.transition(NodeId(1), accept(pn(1, 1), "x"));
 
-        assert_eq!(reply, Some(Message::Reject { promised: pn(2, 2) }));
+        assert_eq!(
+            output.reply,
+            Some((NodeId(1), Message::Reject { promised: pn(2, 2) }))
+        );
     }
 
     #[test]
     fn accept_is_answered_with_accepted() {
-        let me = NodeId(0);
-        let acceptor: Acceptor<&str> = Acceptor {
-            promised: None,
-            accepted_proposal: None,
-        };
+        let acceptor = fresh();
 
-        let (acceptor, _) = acceptor.transition(
-            Message::Prepare {
-                proposal_number: pn(1, 1),
-            },
-            me,
-        );
-        let (_, reply) = acceptor.transition(
-            Message::Accept {
-                proposal_number: pn(1, 1),
-                value: "x",
-            },
-            me,
-        );
+        let acceptor = acceptor
+            .transition(NodeId(1), prepare(pn(1, 1)))
+            .new_acceptor_state;
+        let output = acceptor.transition(NodeId(1), accept(pn(1, 1), "x"));
 
         assert_eq!(
-            reply,
-            Some(Message::Accepted {
-                proposal_number: pn(1, 1),
-                value: "x",
-                from: me,
-            })
+            output.reply,
+            Some((
+                NodeId(1),
+                Message::Accepted {
+                    proposal_number: pn(1, 1),
+                    value: "x",
+                },
+            ))
         );
     }
 
     #[test]
     fn accept_raises_promise_so_lower_accept_is_rejected() {
-        let me = NodeId(0);
-        let acceptor: Acceptor<&str> = Acceptor {
-            promised: None,
-            accepted_proposal: None,
-        };
+        let acceptor = fresh();
 
-        let (acceptor, _) = acceptor.transition(
-            Message::Prepare {
-                proposal_number: pn(3, 3),
-            },
-            me,
-        );
-        let (acceptor, _) = acceptor.transition(
-            Message::Accept {
-                proposal_number: pn(5, 2),
-                value: "x",
-            },
-            me,
-        );
-        let (acceptor, reply) = acceptor.transition(
-            Message::Accept {
-                proposal_number: pn(4, 1),
-                value: "y",
-            },
-            me,
-        );
+        let acceptor = acceptor
+            .transition(NodeId(3), prepare(pn(3, 3)))
+            .new_acceptor_state;
+        let acceptor = acceptor
+            .transition(NodeId(2), accept(pn(5, 2), "x"))
+            .new_acceptor_state;
+        let output = acceptor.transition(NodeId(1), accept(pn(4, 1), "y"));
 
-        assert_eq!(reply, Some(Message::Reject { promised: pn(5, 2) }));
         assert_eq!(
-            acceptor.accepted_proposal,
+            output.reply,
+            Some((NodeId(1), Message::Reject { promised: pn(5, 2) }))
+        );
+        assert_eq!(
+            output.new_acceptor_state.accepted_proposal,
             Some(AcceptedProposal {
                 proposal_number: pn(5, 2),
                 value: "x",
@@ -270,27 +253,50 @@ mod tests {
 
     #[test]
     fn fresh_acceptor_answers_accept_with_accepted() {
-        let me = NodeId(0);
-        let acceptor: Acceptor<&str> = Acceptor {
-            promised: None,
-            accepted_proposal: None,
-        };
-
-        let (_, reply) = acceptor.transition(
-            Message::Accept {
-                proposal_number: pn(1, 1),
-                value: "x",
-            },
-            me,
-        );
+        let output = fresh().transition(NodeId(1), accept(pn(1, 1), "x"));
 
         assert_eq!(
-            reply,
-            Some(Message::Accepted {
-                proposal_number: pn(1, 1),
-                value: "x",
-                from: me,
-            })
+            output.reply,
+            Some((
+                NodeId(1),
+                Message::Accepted {
+                    proposal_number: pn(1, 1),
+                    value: "x",
+                },
+            ))
         );
+    }
+
+    #[test]
+    fn duplicate_prepare_leaves_state_unchanged() {
+        let acceptor = fresh()
+            .transition(NodeId(1), prepare(pn(1, 1)))
+            .new_acceptor_state;
+
+        let output = acceptor.transition(NodeId(1), prepare(pn(1, 1)));
+
+        assert_eq!(output.new_acceptor_state, acceptor);
+    }
+
+    #[test]
+    fn duplicate_accept_leaves_state_unchanged() {
+        let acceptor = fresh()
+            .transition(NodeId(1), accept(pn(1, 1), "x"))
+            .new_acceptor_state;
+
+        let output = acceptor.transition(NodeId(1), accept(pn(1, 1), "x"));
+
+        assert_eq!(output.new_acceptor_state, acceptor);
+    }
+
+    #[test]
+    fn reject_leaves_state_unchanged() {
+        let acceptor = fresh()
+            .transition(NodeId(2), prepare(pn(2, 2)))
+            .new_acceptor_state;
+
+        let output = acceptor.transition(NodeId(1), prepare(pn(1, 1)));
+
+        assert_eq!(output.new_acceptor_state, acceptor);
     }
 }
