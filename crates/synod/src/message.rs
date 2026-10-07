@@ -25,11 +25,13 @@ impl PartialOrd for ProposalNumber {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AcceptedProposal<V> {
     pub proposal_number: ProposalNumber,
     pub value: V,
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub enum Message<V> {
     Prepare {
         proposal_number: ProposalNumber,
