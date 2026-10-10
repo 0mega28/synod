@@ -1,6 +1,6 @@
 use std::cmp::Ordering;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct NodeId(pub u32);
 
 // TODO: how to build a ProposalNumber (constructor vs pub fields, and who

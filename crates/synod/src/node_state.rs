@@ -1,5 +1,5 @@
 use crate::message::{AcceptedProposal, Message, NodeId, ProposalNumber};
-use std::cmp::Ordering;
+use std::{cmp::Ordering, collections::HashSet};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Acceptor<V> {
@@ -7,9 +7,45 @@ pub struct Acceptor<V> {
     pub accepted_proposal: Option<AcceptedProposal<V>>,
 }
 
+/// Phases: `Idle`, `Prepare`, `Accept`, `Done`.
+///
+/// - `Idle -> Prepare`: client request or timeout
+/// - `Prepare -> Accept`: majority of promises, and a report or a client value
+/// - `Prepare -> Idle`: majority of rejects, or timeout
+/// - `Prepare -> Idle`: majority of promises, no reports, no client value (learner inititated a round)
+/// - `Accept -> Done`: majority of accepted
+/// - `Accept -> Idle`: majority of rejects, or timeout
 #[derive(Debug)]
-pub struct Proposer {
-    pub highest_proposal_number: Option<ProposalNumber>,
+pub struct Proposer<V> {
+    pub highest_proposal_number_sent: Option<ProposalNumber>,
+    pub highest_promise_received: Option<ProposalNumber>,
+    pub client_value: Option<V>,
+    pub acceptors: Vec<NodeId>,
+    pub phase: ProposerPhase<V>,
+}
+
+#[derive(Debug)]
+pub enum ProposerPhase<V> {
+    Idle,
+    Prepare {
+        promised: HashSet<NodeId>,
+        rejected: HashSet<NodeId>,
+        highest_proposal_received: Option<AcceptedProposal<V>>,
+    },
+    Accept {
+        value: V,
+        accepted: HashSet<NodeId>,
+        rejected: HashSet<NodeId>,
+    },
+    Done {
+        value: V,
+    },
+}
+
+pub enum ProposerEvent<V> {
+    ClientRequest { value: V },
+    Message { from: NodeId, message: Message<V> },
+    Timeout,
 }
 
 #[derive(Debug)]
@@ -116,6 +152,19 @@ impl<V: Clone> Acceptor<V> {
                 unreachable!("Acceptor shouldn't receive Accepted messages");
             }
         }
+    }
+}
+
+#[derive(Debug)]
+pub struct ProposerOutput<V> {
+    pub new_proposer_state: Proposer<V>,
+    pub send: Option<(Vec<NodeId>, Message<V>)>,
+    pub persist: bool,
+}
+
+impl<V: Clone> Proposer<V> {
+    pub fn transition(&self, event: ProposerEvent<V>) -> ProposerOutput<V> {
+        todo!()
     }
 }
 
@@ -273,5 +322,59 @@ mod tests {
             ))
         );
         assert!(output.persist);
+    }
+
+    #[test]
+    fn proposer_adopts_highest_reported_value() {
+        let proposer: Proposer<&str> = Proposer {
+            highest_proposal_number_sent: Some(pn(4, 0)),
+            highest_promise_received: None,
+            client_value: Some("x"),
+            acceptors: vec![NodeId(1), NodeId(2), NodeId(3)],
+            phase: ProposerPhase::Prepare {
+                promised: HashSet::new(),
+                rejected: HashSet::new(),
+                highest_proposal_received: None,
+            },
+        };
+
+        let proposer = proposer
+            .transition(ProposerEvent::Message {
+                from: NodeId(1),
+                message: Message::Promise {
+                    proposal_number: pn(4, 0),
+                    accepted: Some(AcceptedProposal {
+                        proposal_number: pn(3, 2),
+                        value: "y",
+                    }),
+                },
+            })
+            .new_proposer_state;
+        let output = proposer.transition(ProposerEvent::Message {
+            from: NodeId(2),
+            message: Message::Promise {
+                proposal_number: pn(4, 0),
+                accepted: Some(AcceptedProposal {
+                    proposal_number: pn(1, 1),
+                    value: "z",
+                }),
+            },
+        });
+
+        assert_eq!(
+            output.send,
+            Some((
+                vec![NodeId(1), NodeId(2), NodeId(3)],
+                Message::Accept {
+                    proposal_number: pn(4, 0),
+                    value: "y",
+                },
+            ))
+        );
+        assert!(matches!(
+            output.new_proposer_state.phase,
+            ProposerPhase::Accept { value: "y", .. }
+        ));
+        assert!(!output.persist);
     }
 }
