@@ -15,7 +15,7 @@ pub struct Acceptor<V> {
 /// - `Prepare -> Idle`: majority of promises, no reports, no client value (learner inititated a round)
 /// - `Accept -> Done`: majority of accepted
 /// - `Accept -> Idle`: majority of rejects, or timeout
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Proposer<V> {
     pub highest_proposal_number_sent: Option<ProposalNumber>,
     pub highest_promise_received: Option<ProposalNumber>,
@@ -24,7 +24,7 @@ pub struct Proposer<V> {
     pub phase: ProposerPhase<V>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ProposerPhase<V> {
     Idle,
     Prepare {
@@ -162,9 +162,109 @@ pub struct ProposerOutput<V> {
     pub persist: bool,
 }
 
+#[allow(unused)]
 impl<V: Clone> Proposer<V> {
-    pub fn transition(&self, event: ProposerEvent<V>) -> ProposerOutput<V> {
-        todo!()
+    pub fn transition(self, event: ProposerEvent<V>) -> ProposerOutput<V> {
+        let Proposer {
+            highest_proposal_number_sent,
+            highest_promise_received,
+            client_value,
+            acceptors,
+            phase,
+        } = self;
+
+        match (event, phase) {
+            (
+                ProposerEvent::Message {
+                    from,
+                    message:
+                        Message::Promise {
+                            proposal_number,
+                            accepted,
+                        },
+                },
+                ProposerPhase::Prepare {
+                    mut promised,
+                    rejected,
+                    highest_proposal_received,
+                },
+            ) if let Some(highest_proposal_number_sent) = highest_proposal_number_sent
+                && highest_proposal_number_sent == proposal_number
+                && !promised.contains(&from) =>
+            {
+                promised.insert(from);
+
+                let new_highest_proposal_received = match (accepted, highest_proposal_received) {
+                    (Some(accepted), Some(highest_proposal_received)) => {
+                        if accepted.proposal_number > highest_proposal_received.proposal_number {
+                            Some(accepted)
+                        } else {
+                            Some(highest_proposal_received)
+                        }
+                    }
+                    (Some(accepted), None) => Some(accepted),
+                    (_, highest_proposal_received) => highest_proposal_received,
+                };
+
+                if promised.len() * 2 <= acceptors.len() {
+                    return ProposerOutput {
+                        new_proposer_state: Proposer {
+                            highest_proposal_number_sent: Some(highest_proposal_number_sent),
+                            highest_promise_received,
+                            client_value,
+                            acceptors,
+                            phase: ProposerPhase::Prepare {
+                                promised,
+                                rejected,
+                                highest_proposal_received: new_highest_proposal_received,
+                            },
+                        },
+                        send: None,
+                        persist: false,
+                    };
+                }
+
+                let value = new_highest_proposal_received
+                    .map(|p| p.value)
+                    .or(client_value.clone());
+
+                match value {
+                    Some(value) => ProposerOutput {
+                        new_proposer_state: Proposer {
+                            highest_proposal_number_sent: Some(highest_proposal_number_sent),
+                            highest_promise_received,
+                            client_value,
+                            acceptors: acceptors.clone(),
+                            phase: ProposerPhase::Accept {
+                                value: value.clone(),
+                                accepted: HashSet::new(),
+                                rejected: HashSet::new(),
+                            },
+                        },
+                        send: Some((
+                            acceptors,
+                            Message::Accept {
+                                proposal_number: highest_proposal_number_sent,
+                                value,
+                            },
+                        )),
+                        persist: false,
+                    },
+                    None => ProposerOutput {
+                        new_proposer_state: Proposer {
+                            highest_proposal_number_sent: Some(highest_proposal_number_sent),
+                            highest_promise_received,
+                            client_value,
+                            acceptors,
+                            phase: ProposerPhase::Idle,
+                        },
+                        send: None,
+                        persist: false,
+                    },
+                }
+            }
+            (_, _) => todo!(),
+        }
     }
 }
 
@@ -374,6 +474,77 @@ mod tests {
         assert!(matches!(
             output.new_proposer_state.phase,
             ProposerPhase::Accept { value: "y", .. }
+        ));
+        assert!(!output.persist);
+    }
+
+    fn preparing(client_value: Option<&'static str>) -> Proposer<&'static str> {
+        Proposer {
+            highest_proposal_number_sent: Some(pn(4, 0)),
+            highest_promise_received: None,
+            client_value,
+            acceptors: vec![NodeId(1), NodeId(2), NodeId(3)],
+            phase: ProposerPhase::Prepare {
+                promised: HashSet::new(),
+                rejected: HashSet::new(),
+                highest_proposal_received: None,
+            },
+        }
+    }
+
+    fn promise(
+        from: u32,
+        accepted: Option<AcceptedProposal<&'static str>>,
+    ) -> ProposerEvent<&'static str> {
+        ProposerEvent::Message {
+            from: NodeId(from),
+            message: Message::Promise {
+                proposal_number: pn(4, 0),
+                accepted,
+            },
+        }
+    }
+
+    #[test]
+    fn learner_round_adopts_reported_value() {
+        let proposer = preparing(None)
+            .transition(promise(
+                1,
+                Some(AcceptedProposal {
+                    proposal_number: pn(3, 2),
+                    value: "y",
+                }),
+            ))
+            .new_proposer_state;
+        let output = proposer.transition(promise(2, None));
+
+        assert_eq!(
+            output.send,
+            Some((
+                vec![NodeId(1), NodeId(2), NodeId(3)],
+                Message::Accept {
+                    proposal_number: pn(4, 0),
+                    value: "y",
+                },
+            ))
+        );
+        assert!(matches!(
+            output.new_proposer_state.phase,
+            ProposerPhase::Accept { value: "y", .. }
+        ));
+    }
+
+    #[test]
+    fn learner_round_with_no_reports_goes_idle() {
+        let proposer = preparing(None)
+            .transition(promise(1, None))
+            .new_proposer_state;
+        let output = proposer.transition(promise(2, None));
+
+        assert_eq!(output.send, None);
+        assert!(matches!(
+            output.new_proposer_state.phase,
+            ProposerPhase::Idle
         ));
         assert!(!output.persist);
     }
