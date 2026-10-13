@@ -5,7 +5,6 @@ use std::{cmp::Ordering, collections::HashSet};
 pub struct Acceptor<V> {
     pub promised: Option<ProposalNumber>,
     pub accepted_proposal: Option<AcceptedProposal<V>>,
-    pub nodes: Vec<NodeId>,
 }
 
 /// Phases: `Idle`, `Prepare`, `Accept`, `Done`.
@@ -21,7 +20,6 @@ pub struct Proposer<V> {
     pub highest_proposal_number_sent: Option<ProposalNumber>,
     pub highest_promise_received: Option<ProposalNumber>,
     pub client_value: Option<V>,
-    pub nodes: Vec<NodeId>,
     pub phase: ProposerPhase<V>,
 }
 
@@ -57,11 +55,15 @@ pub struct AcceptorOutput<V> {
 }
 
 impl<V: Clone> Acceptor<V> {
-    pub fn transition(&self, sender_node_id: NodeId, message: Message<V>) -> AcceptorOutput<V> {
+    pub fn transition(
+        &self,
+        nodes: &[NodeId],
+        sender_node_id: NodeId,
+        message: Message<V>,
+    ) -> AcceptorOutput<V> {
         let Acceptor {
             promised,
             accepted_proposal,
-            nodes,
         } = self;
         match message {
             Message::Prepare { proposal_number } => {
@@ -71,7 +73,6 @@ impl<V: Clone> Acceptor<V> {
                             new_acceptor_state: Acceptor {
                                 promised: Some(proposal_number),
                                 accepted_proposal: accepted_proposal.clone(),
-                                nodes: nodes.clone(),
                             },
                             send: Some((
                                 vec![sender_node_id],
@@ -98,7 +99,6 @@ impl<V: Clone> Acceptor<V> {
                     new_acceptor_state: Acceptor {
                         promised: Some(proposal_number),
                         accepted_proposal: accepted_proposal.clone(),
-                        nodes: nodes.clone(),
                     },
                     send: Some((
                         vec![sender_node_id],
@@ -135,10 +135,9 @@ impl<V: Clone> Acceptor<V> {
                             proposal_number,
                             value: value.clone(),
                         }),
-                        nodes: nodes.clone(),
                     },
                     send: Some((
-                        nodes.clone(),
+                        nodes.to_vec(),
                         Message::Accepted {
                             proposal_number,
                             value,
@@ -169,12 +168,16 @@ pub struct ProposerOutput<V> {
 
 #[allow(unused)]
 impl<V: Clone> Proposer<V> {
-    pub fn transition(self, event: ProposerEvent<V>) -> ProposerOutput<V> {
+    pub fn transition(
+        self,
+        own_id: NodeId,
+        nodes: &[NodeId],
+        event: ProposerEvent<V>,
+    ) -> ProposerOutput<V> {
         let Proposer {
             highest_proposal_number_sent,
             highest_promise_received,
             client_value,
-            nodes,
             phase,
         } = self;
 
@@ -217,7 +220,6 @@ impl<V: Clone> Proposer<V> {
                             highest_proposal_number_sent: Some(highest_proposal_number_sent),
                             highest_promise_received,
                             client_value,
-                            nodes,
                             phase: ProposerPhase::Prepare {
                                 promised,
                                 rejected,
@@ -239,7 +241,6 @@ impl<V: Clone> Proposer<V> {
                             highest_proposal_number_sent: Some(highest_proposal_number_sent),
                             highest_promise_received,
                             client_value,
-                            nodes: nodes.clone(),
                             phase: ProposerPhase::Accept {
                                 value: value.clone(),
                                 accepted: HashSet::new(),
@@ -247,7 +248,7 @@ impl<V: Clone> Proposer<V> {
                             },
                         },
                         send: Some((
-                            nodes,
+                            nodes.to_vec(),
                             Message::Accept {
                                 proposal_number: highest_proposal_number_sent,
                                 value,
@@ -260,7 +261,6 @@ impl<V: Clone> Proposer<V> {
                             highest_proposal_number_sent: Some(highest_proposal_number_sent),
                             highest_promise_received,
                             client_value,
-                            nodes,
                             phase: ProposerPhase::Idle,
                         },
                         send: None,
@@ -282,7 +282,6 @@ impl<V: Clone> Proposer<V> {
                     highest_proposal_number_sent,
                     highest_promise_received,
                     client_value,
-                    nodes,
                     phase,
                 },
                 send: None,
@@ -312,7 +311,6 @@ mod tests {
         Acceptor {
             promised: None,
             accepted_proposal: None,
-            nodes: nodes(),
         }
     }
 
@@ -332,12 +330,12 @@ mod tests {
         let acceptor = fresh();
 
         let acceptor = acceptor
-            .transition(NodeId(1), prepare(pn(1, 1)))
+            .transition(&nodes(), NodeId(1), prepare(pn(1, 1)))
             .new_acceptor_state;
         let acceptor = acceptor
-            .transition(NodeId(1), accept(pn(1, 1), "x"))
+            .transition(&nodes(), NodeId(1), accept(pn(1, 1), "x"))
             .new_acceptor_state;
-        let output = acceptor.transition(NodeId(2), prepare(pn(2, 2)));
+        let output = acceptor.transition(&nodes(), NodeId(2), prepare(pn(2, 2)));
 
         assert_eq!(
             output.send,
@@ -360,9 +358,9 @@ mod tests {
         let acceptor = fresh();
 
         let acceptor = acceptor
-            .transition(NodeId(2), prepare(pn(2, 2)))
+            .transition(&nodes(), NodeId(2), prepare(pn(2, 2)))
             .new_acceptor_state;
-        let output = acceptor.transition(NodeId(1), prepare(pn(1, 1)));
+        let output = acceptor.transition(&nodes(), NodeId(1), prepare(pn(1, 1)));
 
         assert_eq!(
             output.send,
@@ -377,9 +375,9 @@ mod tests {
         let acceptor = fresh();
 
         let acceptor = acceptor
-            .transition(NodeId(2), prepare(pn(2, 2)))
+            .transition(&nodes(), NodeId(2), prepare(pn(2, 2)))
             .new_acceptor_state;
-        let output = acceptor.transition(NodeId(1), accept(pn(1, 1), "x"));
+        let output = acceptor.transition(&nodes(), NodeId(1), accept(pn(1, 1), "x"));
 
         assert_eq!(
             output.send,
@@ -394,9 +392,9 @@ mod tests {
         let acceptor = fresh();
 
         let acceptor = acceptor
-            .transition(NodeId(1), prepare(pn(1, 1)))
+            .transition(&nodes(), NodeId(1), prepare(pn(1, 1)))
             .new_acceptor_state;
-        let output = acceptor.transition(NodeId(1), accept(pn(1, 1), "x"));
+        let output = acceptor.transition(&nodes(), NodeId(1), accept(pn(1, 1), "x"));
 
         assert_eq!(
             output.send,
@@ -416,12 +414,12 @@ mod tests {
         let acceptor = fresh();
 
         let acceptor = acceptor
-            .transition(NodeId(3), prepare(pn(3, 3)))
+            .transition(&nodes(), NodeId(3), prepare(pn(3, 3)))
             .new_acceptor_state;
         let acceptor = acceptor
-            .transition(NodeId(2), accept(pn(5, 2), "x"))
+            .transition(&nodes(), NodeId(2), accept(pn(5, 2), "x"))
             .new_acceptor_state;
-        let output = acceptor.transition(NodeId(1), accept(pn(4, 1), "y"));
+        let output = acceptor.transition(&nodes(), NodeId(1), accept(pn(4, 1), "y"));
 
         assert_eq!(
             output.send,
@@ -439,7 +437,7 @@ mod tests {
 
     #[test]
     fn fresh_acceptor_answers_accept_with_accepted() {
-        let output = fresh().transition(NodeId(1), accept(pn(1, 1), "x"));
+        let output = fresh().transition(&nodes(), NodeId(1), accept(pn(1, 1), "x"));
 
         assert_eq!(
             output.send,
@@ -460,7 +458,6 @@ mod tests {
             highest_proposal_number_sent: Some(pn(4, 0)),
             highest_promise_received: None,
             client_value: Some("x"),
-            nodes: nodes(),
             phase: ProposerPhase::Prepare {
                 promised: HashSet::new(),
                 rejected: HashSet::new(),
@@ -469,27 +466,35 @@ mod tests {
         };
 
         let proposer = proposer
-            .transition(ProposerEvent::Message {
-                from: NodeId(1),
+            .transition(
+                NodeId(0),
+                &nodes(),
+                ProposerEvent::Message {
+                    from: NodeId(1),
+                    message: Message::Promise {
+                        proposal_number: pn(4, 0),
+                        accepted: Some(AcceptedProposal {
+                            proposal_number: pn(3, 2),
+                            value: "y",
+                        }),
+                    },
+                },
+            )
+            .new_proposer_state;
+        let output = proposer.transition(
+            NodeId(0),
+            &nodes(),
+            ProposerEvent::Message {
+                from: NodeId(2),
                 message: Message::Promise {
                     proposal_number: pn(4, 0),
                     accepted: Some(AcceptedProposal {
-                        proposal_number: pn(3, 2),
-                        value: "y",
+                        proposal_number: pn(1, 1),
+                        value: "z",
                     }),
                 },
-            })
-            .new_proposer_state;
-        let output = proposer.transition(ProposerEvent::Message {
-            from: NodeId(2),
-            message: Message::Promise {
-                proposal_number: pn(4, 0),
-                accepted: Some(AcceptedProposal {
-                    proposal_number: pn(1, 1),
-                    value: "z",
-                }),
             },
-        });
+        );
 
         assert_eq!(
             output.send,
@@ -513,7 +518,6 @@ mod tests {
             highest_proposal_number_sent: Some(pn(4, 0)),
             highest_promise_received: None,
             client_value,
-            nodes: nodes(),
             phase: ProposerPhase::Prepare {
                 promised: HashSet::new(),
                 rejected: HashSet::new(),
@@ -538,15 +542,19 @@ mod tests {
     #[test]
     fn learner_round_adopts_reported_value() {
         let proposer = preparing(None)
-            .transition(promise(
-                1,
-                Some(AcceptedProposal {
-                    proposal_number: pn(3, 2),
-                    value: "y",
-                }),
-            ))
+            .transition(
+                NodeId(0),
+                &nodes(),
+                promise(
+                    1,
+                    Some(AcceptedProposal {
+                        proposal_number: pn(3, 2),
+                        value: "y",
+                    }),
+                ),
+            )
             .new_proposer_state;
-        let output = proposer.transition(promise(2, None));
+        let output = proposer.transition(NodeId(0), &nodes(), promise(2, None));
 
         assert_eq!(
             output.send,
@@ -567,9 +575,9 @@ mod tests {
     #[test]
     fn learner_round_with_no_reports_goes_idle() {
         let proposer = preparing(None)
-            .transition(promise(1, None))
+            .transition(NodeId(0), &nodes(), promise(1, None))
             .new_proposer_state;
-        let output = proposer.transition(promise(2, None));
+        let output = proposer.transition(NodeId(0), &nodes(), promise(2, None));
 
         assert_eq!(output.send, None);
         assert!(matches!(
@@ -582,9 +590,9 @@ mod tests {
     #[test]
     fn duplicate_promise_is_ignored() {
         let proposer = preparing(Some("x"))
-            .transition(promise(1, None))
+            .transition(NodeId(0), &nodes(), promise(1, None))
             .new_proposer_state;
-        let output = proposer.transition(promise(1, None));
+        let output = proposer.transition(NodeId(0), &nodes(), promise(1, None));
 
         assert_eq!(output.send, None);
         assert!(!output.persist);
@@ -596,13 +604,17 @@ mod tests {
 
     #[test]
     fn promise_for_old_round_is_ignored() {
-        let output = preparing(Some("x")).transition(ProposerEvent::Message {
-            from: NodeId(1),
-            message: Message::Promise {
-                proposal_number: pn(3, 0),
-                accepted: None,
+        let output = preparing(Some("x")).transition(
+            NodeId(0),
+            &nodes(),
+            ProposerEvent::Message {
+                from: NodeId(1),
+                message: Message::Promise {
+                    proposal_number: pn(3, 0),
+                    accepted: None,
+                },
             },
-        });
+        );
 
         assert_eq!(output.send, None);
         assert!(!output.persist);
@@ -615,9 +627,9 @@ mod tests {
     #[test]
     fn duplicate_prepare_is_promised_again() {
         let acceptor = fresh()
-            .transition(NodeId(1), prepare(pn(1, 1)))
+            .transition(&nodes(), NodeId(1), prepare(pn(1, 1)))
             .new_acceptor_state;
-        let output = acceptor.transition(NodeId(1), prepare(pn(1, 1)));
+        let output = acceptor.transition(&nodes(), NodeId(1), prepare(pn(1, 1)));
 
         assert_eq!(
             output.send,
@@ -634,21 +646,29 @@ mod tests {
     #[test]
     fn proposer_adopts_highest_report_when_it_arrives_last() {
         let proposer = preparing(Some("x"))
-            .transition(promise(
-                1,
-                Some(AcceptedProposal {
-                    proposal_number: pn(1, 1),
-                    value: "z",
-                }),
-            ))
+            .transition(
+                NodeId(0),
+                &nodes(),
+                promise(
+                    1,
+                    Some(AcceptedProposal {
+                        proposal_number: pn(1, 1),
+                        value: "z",
+                    }),
+                ),
+            )
             .new_proposer_state;
-        let output = proposer.transition(promise(
-            2,
-            Some(AcceptedProposal {
-                proposal_number: pn(3, 2),
-                value: "y",
-            }),
-        ));
+        let output = proposer.transition(
+            NodeId(0),
+            &nodes(),
+            promise(
+                2,
+                Some(AcceptedProposal {
+                    proposal_number: pn(3, 2),
+                    value: "y",
+                }),
+            ),
+        );
 
         assert_eq!(
             output.send,
