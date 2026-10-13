@@ -5,6 +5,7 @@ use std::{cmp::Ordering, collections::HashSet};
 pub struct Acceptor<V> {
     pub promised: Option<ProposalNumber>,
     pub accepted_proposal: Option<AcceptedProposal<V>>,
+    pub nodes: Vec<NodeId>,
 }
 
 /// Phases: `Idle`, `Prepare`, `Accept`, `Done`.
@@ -20,7 +21,7 @@ pub struct Proposer<V> {
     pub highest_proposal_number_sent: Option<ProposalNumber>,
     pub highest_promise_received: Option<ProposalNumber>,
     pub client_value: Option<V>,
-    pub acceptors: Vec<NodeId>,
+    pub nodes: Vec<NodeId>,
     pub phase: ProposerPhase<V>,
 }
 
@@ -51,7 +52,7 @@ pub enum ProposerEvent<V> {
 #[derive(Debug)]
 pub struct AcceptorOutput<V> {
     pub new_acceptor_state: Acceptor<V>,
-    pub reply: Option<(NodeId, Message<V>)>,
+    pub send: Option<(Vec<NodeId>, Message<V>)>,
     pub persist: bool,
 }
 
@@ -60,6 +61,7 @@ impl<V: Clone> Acceptor<V> {
         let Acceptor {
             promised,
             accepted_proposal,
+            nodes,
         } = self;
         match message {
             Message::Prepare { proposal_number } => {
@@ -69,9 +71,10 @@ impl<V: Clone> Acceptor<V> {
                             new_acceptor_state: Acceptor {
                                 promised: Some(proposal_number),
                                 accepted_proposal: accepted_proposal.clone(),
+                                nodes: nodes.clone(),
                             },
-                            reply: Some((
-                                sender_node_id,
+                            send: Some((
+                                vec![sender_node_id],
                                 Message::Promise {
                                     proposal_number,
                                     accepted: accepted_proposal.clone(),
@@ -81,8 +84,8 @@ impl<V: Clone> Acceptor<V> {
                         },
                         Ordering::Greater => AcceptorOutput {
                             new_acceptor_state: self.clone(),
-                            reply: Some((
-                                sender_node_id,
+                            send: Some((
+                                vec![sender_node_id],
                                 Message::Reject {
                                     promised: *promised,
                                 },
@@ -95,9 +98,10 @@ impl<V: Clone> Acceptor<V> {
                     new_acceptor_state: Acceptor {
                         promised: Some(proposal_number),
                         accepted_proposal: accepted_proposal.clone(),
+                        nodes: nodes.clone(),
                     },
-                    reply: Some((
-                        sender_node_id,
+                    send: Some((
+                        vec![sender_node_id],
                         Message::Promise {
                             proposal_number,
                             accepted: accepted_proposal.clone(),
@@ -115,8 +119,8 @@ impl<V: Clone> Acceptor<V> {
                 {
                     return AcceptorOutput {
                         new_acceptor_state: self.clone(),
-                        reply: Some((
-                            sender_node_id,
+                        send: Some((
+                            vec![sender_node_id],
                             Message::Reject {
                                 promised: *promised,
                             },
@@ -131,9 +135,10 @@ impl<V: Clone> Acceptor<V> {
                             proposal_number,
                             value: value.clone(),
                         }),
+                        nodes: nodes.clone(),
                     },
-                    reply: Some((
-                        sender_node_id,
+                    send: Some((
+                        nodes.clone(),
                         Message::Accepted {
                             proposal_number,
                             value,
@@ -169,7 +174,7 @@ impl<V: Clone> Proposer<V> {
             highest_proposal_number_sent,
             highest_promise_received,
             client_value,
-            acceptors,
+            nodes,
             phase,
         } = self;
 
@@ -206,13 +211,13 @@ impl<V: Clone> Proposer<V> {
                     (_, highest_proposal_received) => highest_proposal_received,
                 };
 
-                if promised.len() * 2 <= acceptors.len() {
+                if promised.len() * 2 <= nodes.len() {
                     return ProposerOutput {
                         new_proposer_state: Proposer {
                             highest_proposal_number_sent: Some(highest_proposal_number_sent),
                             highest_promise_received,
                             client_value,
-                            acceptors,
+                            nodes,
                             phase: ProposerPhase::Prepare {
                                 promised,
                                 rejected,
@@ -234,7 +239,7 @@ impl<V: Clone> Proposer<V> {
                             highest_proposal_number_sent: Some(highest_proposal_number_sent),
                             highest_promise_received,
                             client_value,
-                            acceptors: acceptors.clone(),
+                            nodes: nodes.clone(),
                             phase: ProposerPhase::Accept {
                                 value: value.clone(),
                                 accepted: HashSet::new(),
@@ -242,7 +247,7 @@ impl<V: Clone> Proposer<V> {
                             },
                         },
                         send: Some((
-                            acceptors,
+                            nodes,
                             Message::Accept {
                                 proposal_number: highest_proposal_number_sent,
                                 value,
@@ -255,7 +260,7 @@ impl<V: Clone> Proposer<V> {
                             highest_proposal_number_sent: Some(highest_proposal_number_sent),
                             highest_promise_received,
                             client_value,
-                            acceptors,
+                            nodes,
                             phase: ProposerPhase::Idle,
                         },
                         send: None,
@@ -277,7 +282,7 @@ impl<V: Clone> Proposer<V> {
                     highest_proposal_number_sent,
                     highest_promise_received,
                     client_value,
-                    acceptors,
+                    nodes,
                     phase,
                 },
                 send: None,
@@ -299,10 +304,15 @@ mod tests {
         }
     }
 
+    fn nodes() -> Vec<NodeId> {
+        vec![NodeId(1), NodeId(2), NodeId(3)]
+    }
+
     fn fresh() -> Acceptor<&'static str> {
         Acceptor {
             promised: None,
             accepted_proposal: None,
+            nodes: nodes(),
         }
     }
 
@@ -330,9 +340,9 @@ mod tests {
         let output = acceptor.transition(NodeId(2), prepare(pn(2, 2)));
 
         assert_eq!(
-            output.reply,
+            output.send,
             Some((
-                NodeId(2),
+                vec![NodeId(2)],
                 Message::Promise {
                     proposal_number: pn(2, 2),
                     accepted: Some(AcceptedProposal {
@@ -355,8 +365,8 @@ mod tests {
         let output = acceptor.transition(NodeId(1), prepare(pn(1, 1)));
 
         assert_eq!(
-            output.reply,
-            Some((NodeId(1), Message::Reject { promised: pn(2, 2) }))
+            output.send,
+            Some((vec![NodeId(1)], Message::Reject { promised: pn(2, 2) }))
         );
         assert_eq!(output.new_acceptor_state, acceptor);
         assert!(!output.persist);
@@ -372,8 +382,8 @@ mod tests {
         let output = acceptor.transition(NodeId(1), accept(pn(1, 1), "x"));
 
         assert_eq!(
-            output.reply,
-            Some((NodeId(1), Message::Reject { promised: pn(2, 2) }))
+            output.send,
+            Some((vec![NodeId(1)], Message::Reject { promised: pn(2, 2) }))
         );
         assert_eq!(output.new_acceptor_state, acceptor);
         assert!(!output.persist);
@@ -389,9 +399,9 @@ mod tests {
         let output = acceptor.transition(NodeId(1), accept(pn(1, 1), "x"));
 
         assert_eq!(
-            output.reply,
+            output.send,
             Some((
-                NodeId(1),
+                nodes(),
                 Message::Accepted {
                     proposal_number: pn(1, 1),
                     value: "x",
@@ -414,8 +424,8 @@ mod tests {
         let output = acceptor.transition(NodeId(1), accept(pn(4, 1), "y"));
 
         assert_eq!(
-            output.reply,
-            Some((NodeId(1), Message::Reject { promised: pn(5, 2) }))
+            output.send,
+            Some((vec![NodeId(1)], Message::Reject { promised: pn(5, 2) }))
         );
         assert_eq!(
             output.new_acceptor_state.accepted_proposal,
@@ -432,9 +442,9 @@ mod tests {
         let output = fresh().transition(NodeId(1), accept(pn(1, 1), "x"));
 
         assert_eq!(
-            output.reply,
+            output.send,
             Some((
-                NodeId(1),
+                nodes(),
                 Message::Accepted {
                     proposal_number: pn(1, 1),
                     value: "x",
@@ -450,7 +460,7 @@ mod tests {
             highest_proposal_number_sent: Some(pn(4, 0)),
             highest_promise_received: None,
             client_value: Some("x"),
-            acceptors: vec![NodeId(1), NodeId(2), NodeId(3)],
+            nodes: nodes(),
             phase: ProposerPhase::Prepare {
                 promised: HashSet::new(),
                 rejected: HashSet::new(),
@@ -503,7 +513,7 @@ mod tests {
             highest_proposal_number_sent: Some(pn(4, 0)),
             highest_promise_received: None,
             client_value,
-            acceptors: vec![NodeId(1), NodeId(2), NodeId(3)],
+            nodes: nodes(),
             phase: ProposerPhase::Prepare {
                 promised: HashSet::new(),
                 rejected: HashSet::new(),
