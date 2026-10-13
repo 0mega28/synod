@@ -611,4 +611,54 @@ mod tests {
             ProposerPhase::Prepare { promised, .. } if promised.is_empty()
         ));
     }
+
+    #[test]
+    fn duplicate_prepare_is_promised_again() {
+        let acceptor = fresh()
+            .transition(NodeId(1), prepare(pn(1, 1)))
+            .new_acceptor_state;
+        let output = acceptor.transition(NodeId(1), prepare(pn(1, 1)));
+
+        assert_eq!(
+            output.send,
+            Some((
+                vec![NodeId(1)],
+                Message::Promise {
+                    proposal_number: pn(1, 1),
+                    accepted: None,
+                },
+            ))
+        );
+    }
+
+    #[test]
+    fn proposer_adopts_highest_report_when_it_arrives_last() {
+        let proposer = preparing(Some("x"))
+            .transition(promise(
+                1,
+                Some(AcceptedProposal {
+                    proposal_number: pn(1, 1),
+                    value: "z",
+                }),
+            ))
+            .new_proposer_state;
+        let output = proposer.transition(promise(
+            2,
+            Some(AcceptedProposal {
+                proposal_number: pn(3, 2),
+                value: "y",
+            }),
+        ));
+
+        assert_eq!(
+            output.send,
+            Some((
+                nodes(),
+                Message::Accept {
+                    proposal_number: pn(4, 0),
+                    value: "y",
+                },
+            ))
+        );
+    }
 }
