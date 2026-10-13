@@ -263,6 +263,26 @@ impl<V: Clone> Proposer<V> {
                     },
                 }
             }
+            // Duplicates, replies from an old round, and promises that arrive
+            // after the majority are normal on a real network.
+            (
+                ProposerEvent::Message {
+                    message: Message::Promise { .. },
+                    ..
+                },
+                phase @ (ProposerPhase::Prepare { .. } | ProposerPhase::Accept { .. }),
+            )
+            | (_, phase @ ProposerPhase::Done { .. }) => ProposerOutput {
+                new_proposer_state: Proposer {
+                    highest_proposal_number_sent,
+                    highest_promise_received,
+                    client_value,
+                    acceptors,
+                    phase,
+                },
+                send: None,
+                persist: false,
+            },
             (_, _) => todo!(),
         }
     }
@@ -547,5 +567,38 @@ mod tests {
             ProposerPhase::Idle
         ));
         assert!(!output.persist);
+    }
+
+    #[test]
+    fn duplicate_promise_is_ignored() {
+        let proposer = preparing(Some("x"))
+            .transition(promise(1, None))
+            .new_proposer_state;
+        let output = proposer.transition(promise(1, None));
+
+        assert_eq!(output.send, None);
+        assert!(!output.persist);
+        assert!(matches!(
+            output.new_proposer_state.phase,
+            ProposerPhase::Prepare { promised, .. } if promised.len() == 1
+        ));
+    }
+
+    #[test]
+    fn promise_for_old_round_is_ignored() {
+        let output = preparing(Some("x")).transition(ProposerEvent::Message {
+            from: NodeId(1),
+            message: Message::Promise {
+                proposal_number: pn(3, 0),
+                accepted: None,
+            },
+        });
+
+        assert_eq!(output.send, None);
+        assert!(!output.persist);
+        assert!(matches!(
+            output.new_proposer_state.phase,
+            ProposerPhase::Prepare { promised, .. } if promised.is_empty()
+        ));
     }
 }
