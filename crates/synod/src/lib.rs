@@ -1,5 +1,9 @@
 //! Multi-Paxos consensus core.
 
+pub mod acceptor;
 pub mod message;
-pub mod node_state;
+pub mod proposer;
 pub mod transport;
+
+#[cfg(test)]
+mod test_support;
