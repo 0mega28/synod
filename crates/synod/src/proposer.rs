@@ -62,19 +62,12 @@ pub struct ProposerOutput<V> {
 #[allow(unused)]
 impl<V: Clone> Proposer<V> {
     pub fn transition(
-        self,
+        mut self,
         own_id: NodeId,
         nodes: &[NodeId],
         event: ProposerEvent<V>,
     ) -> ProposerOutput<V> {
-        let Proposer {
-            highest_proposal_number_sent,
-            highest_promise_received,
-            client_value,
-            phase,
-        } = self;
-
-        match (event, phase) {
+        match (event, self.phase) {
             (
                 ProposerEvent::Message {
                     from,
@@ -89,76 +82,55 @@ impl<V: Clone> Proposer<V> {
                     rejected,
                     highest_proposal_received,
                 },
-            ) if let Some(highest_proposal_number_sent) = highest_proposal_number_sent
-                && highest_proposal_number_sent == proposal_number
+            ) if self
+                .highest_proposal_number_sent
+                .is_some_and(|sent| sent == proposal_number)
                 && !promised.contains(&from) =>
             {
                 promised.insert(from);
 
-                let new_highest_proposal_received = match (accepted, highest_proposal_received) {
-                    (Some(accepted), Some(highest_proposal_received)) => {
-                        if accepted.proposal_number > highest_proposal_received.proposal_number {
-                            Some(accepted)
-                        } else {
-                            Some(highest_proposal_received)
-                        }
-                    }
-                    (Some(accepted), None) => Some(accepted),
-                    (_, highest_proposal_received) => highest_proposal_received,
-                };
+                let highest_proposal_received = accepted
+                    .into_iter()
+                    .chain(highest_proposal_received)
+                    .max_by_key(|p| p.proposal_number);
 
-                if promised.len() * 2 <= nodes.len() {
-                    return ProposerOutput {
-                        new_proposer_state: Proposer {
-                            highest_proposal_number_sent: Some(highest_proposal_number_sent),
-                            highest_promise_received,
-                            client_value,
-                            phase: ProposerPhase::Prepare {
-                                promised,
-                                rejected,
-                                highest_proposal_received: new_highest_proposal_received,
-                            },
+                let (phase, send) = if promised.len() * 2 <= nodes.len() {
+                    (
+                        ProposerPhase::Prepare {
+                            promised,
+                            rejected,
+                            highest_proposal_received,
                         },
-                        send: None,
-                        persist: false,
-                    };
-                }
-
-                let value = new_highest_proposal_received
-                    .map(|p| p.value)
-                    .or(client_value.clone());
-
-                match value {
-                    Some(value) => ProposerOutput {
-                        new_proposer_state: Proposer {
-                            highest_proposal_number_sent: Some(highest_proposal_number_sent),
-                            highest_promise_received,
-                            client_value,
-                            phase: ProposerPhase::Accept {
+                        None,
+                    )
+                } else {
+                    match highest_proposal_received
+                        .map(|p| p.value)
+                        .or_else(|| self.client_value.clone())
+                    {
+                        Some(value) => (
+                            ProposerPhase::Accept {
                                 value: value.clone(),
                                 accepted: HashSet::new(),
                                 rejected: HashSet::new(),
                             },
-                        },
-                        send: Some((
-                            nodes.to_vec(),
-                            Message::Accept {
-                                proposal_number: highest_proposal_number_sent,
-                                value,
-                            },
-                        )),
-                        persist: false,
-                    },
-                    None => ProposerOutput {
-                        new_proposer_state: Proposer {
-                            highest_proposal_number_sent: Some(highest_proposal_number_sent),
-                            highest_promise_received,
-                            client_value,
-                            phase: ProposerPhase::Idle,
-                        },
-                        send: None,
-                        persist: false,
-                    },
+                            Some((
+                                nodes.to_vec(),
+                                Message::Accept {
+                                    proposal_number,
+                                    value,
+                                },
+                            )),
+                        ),
+                        None => (ProposerPhase::Idle, None),
+                    }
+                };
+
+                self.phase = phase;
+                ProposerOutput {
+                    new_proposer_state: self,
+                    send,
+                    persist: false,
                 }
             }
             // An acceptor rejects round n only after promising something higher,
@@ -171,23 +143,23 @@ impl<V: Clone> Proposer<V> {
                 mut phase @ (ProposerPhase::Idle
                 | ProposerPhase::Prepare { .. }
                 | ProposerPhase::Accept { .. }),
-            ) if highest_proposal_number_sent.is_none_or(|sent| promised > sent) => {
+            ) if self
+                .highest_proposal_number_sent
+                .is_none_or(|sent| promised > sent) =>
+            {
                 let majority_rejected = phase.rejected_mut().is_some_and(|rejected| {
                     rejected.insert(from);
                     rejected.len() * 2 > nodes.len()
                 });
 
+                self.highest_promise_received = self.highest_promise_received.max(Some(promised));
+                self.phase = if majority_rejected {
+                    ProposerPhase::Idle
+                } else {
+                    phase
+                };
                 ProposerOutput {
-                    new_proposer_state: Proposer {
-                        highest_proposal_number_sent,
-                        highest_promise_received: highest_promise_received.max(Some(promised)),
-                        client_value,
-                        phase: if majority_rejected {
-                            ProposerPhase::Idle
-                        } else {
-                            phase
-                        },
-                    },
+                    new_proposer_state: self,
                     send: None,
                     persist: false,
                 }
@@ -205,12 +177,14 @@ impl<V: Clone> Proposer<V> {
                     mut accepted,
                     rejected,
                 },
-            ) if highest_proposal_number_sent.is_some_and(|sent| proposal_number == sent)
+            ) if self
+                .highest_proposal_number_sent
+                .is_some_and(|sent| sent == proposal_number)
                 && !accepted.contains(&from) =>
             {
                 accepted.insert(from);
 
-                let new_phase = if accepted.len() * 2 <= nodes.len() {
+                self.phase = if accepted.len() * 2 <= nodes.len() {
                     ProposerPhase::Accept {
                         value,
                         accepted,
@@ -219,15 +193,8 @@ impl<V: Clone> Proposer<V> {
                 } else {
                     ProposerPhase::Done { value }
                 };
-                let new_proposer_state = Proposer {
-                    highest_proposal_number_sent,
-                    highest_promise_received,
-                    client_value,
-                    phase: new_phase,
-                };
-
                 ProposerOutput {
-                    new_proposer_state,
+                    new_proposer_state: self,
                     send: None,
                     persist: false,
                 }
@@ -242,16 +209,14 @@ impl<V: Clone> Proposer<V> {
                 },
                 phase,
             )
-            | (_, phase @ ProposerPhase::Done { .. }) => ProposerOutput {
-                new_proposer_state: Proposer {
-                    highest_proposal_number_sent,
-                    highest_promise_received,
-                    client_value,
-                    phase,
-                },
-                send: None,
-                persist: false,
-            },
+            | (_, phase @ ProposerPhase::Done { .. }) => {
+                self.phase = phase;
+                ProposerOutput {
+                    new_proposer_state: self,
+                    send: None,
+                    persist: false,
+                }
+            }
             (_, _) => todo!(),
         }
     }
