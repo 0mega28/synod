@@ -106,14 +106,11 @@ impl<V: Clone> Acceptor<V> {
                     persist: true,
                 }
             }
-            Message::Promise { .. } => {
-                unreachable!("Acceptor shouldn't receive Promise messages");
-            }
-            Message::Reject { .. } => {
-                unreachable!("Acceptor shouldn't receive Reject messages");
-            }
-            Message::Accepted { .. } => {
-                unreachable!("Acceptor shouldn't receive Accepted messages");
+            _ => {
+                unreachable!(
+                    "Acceptor only handles Message::Prepare and Message::Accept, but received {}",
+                    message.kind()
+                );
             }
         }
     }

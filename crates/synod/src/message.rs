@@ -53,6 +53,18 @@ pub enum Message<V> {
     },
 }
 
+impl<V> Message<V> {
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Message::Prepare { .. } => "Prepare",
+            Message::Promise { .. } => "Promise",
+            Message::Reject { .. } => "Reject",
+            Message::Accept { .. } => "Accept",
+            Message::Accepted { .. } => "Accepted",
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
