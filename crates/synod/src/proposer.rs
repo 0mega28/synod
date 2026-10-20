@@ -59,7 +59,6 @@ pub struct ProposerOutput<V> {
     pub persist: bool,
 }
 
-#[allow(unused)]
 impl<V: Clone> Proposer<V> {
     pub fn transition(
         mut self,
@@ -217,7 +216,47 @@ impl<V: Clone> Proposer<V> {
                     persist: false,
                 }
             }
+            (
+                event @ (ProposerEvent::ClientRequest { .. } | ProposerEvent::Timeout),
+                ProposerPhase::Idle,
+            ) => {
+                if let ProposerEvent::ClientRequest { value } = event {
+                    // TODO(multi-decree): a reject may have occurred in phase 1 and sent us
+                    // back to idle, and then a new client request replaces the current client
+                    // request.
+                    self.client_value = Some(value);
+                }
+
+                self.phase = ProposerPhase::Prepare {
+                    promised: HashSet::new(),
+                    rejected: HashSet::new(),
+                    highest_proposal_received: None,
+                };
+                let new_proposal_number = self.next_proposal_number(own_id);
+
+                self.highest_proposal_number_sent = Some(new_proposal_number);
+                ProposerOutput {
+                    new_proposer_state: self,
+                    send: Some((
+                        nodes.to_vec(),
+                        Message::Prepare {
+                            proposal_number: new_proposal_number,
+                        },
+                    )),
+                    persist: true,
+                }
+            }
             (_, _) => todo!(),
+        }
+    }
+
+    fn next_proposal_number(&self, own_id: NodeId) -> ProposalNumber {
+        ProposalNumber {
+            round: self
+                .highest_proposal_number_sent
+                .max(self.highest_promise_received)
+                .map_or(1, |p| p.round + 1),
+            node_id: own_id,
         }
     }
 }
@@ -662,5 +701,98 @@ mod tests {
             output.new_proposer_state.phase,
             ProposerPhase::Idle
         ));
+    }
+
+    fn idle(
+        highest_proposal_number_sent: Option<ProposalNumber>,
+        highest_promise_received: Option<ProposalNumber>,
+        client_value: Option<&'static str>,
+    ) -> Proposer<&'static str> {
+        Proposer {
+            highest_proposal_number_sent,
+            highest_promise_received,
+            client_value,
+            phase: ProposerPhase::Idle,
+        }
+    }
+
+    fn assert_starts_round(output: ProposerOutput<&'static str>, round: ProposalNumber) {
+        assert_eq!(
+            output.send,
+            Some((
+                nodes(),
+                Message::Prepare {
+                    proposal_number: round
+                }
+            ))
+        );
+        assert!(output.persist);
+        assert_eq!(
+            output.new_proposer_state.highest_proposal_number_sent,
+            Some(round)
+        );
+        assert!(matches!(
+            output.new_proposer_state.phase,
+            ProposerPhase::Prepare { promised, rejected, highest_proposal_received: None }
+                if promised.is_empty() && rejected.is_empty()
+        ));
+    }
+
+    #[test]
+    fn client_request_on_fresh_proposer_starts_round_one() {
+        let output = idle(None, None, None).transition(
+            NodeId(1),
+            &nodes(),
+            ProposerEvent::ClientRequest { value: "x" },
+        );
+
+        assert_eq!(output.new_proposer_state.client_value, Some("x"));
+        assert_starts_round(output, pn(1, 1));
+    }
+
+    #[test]
+    fn next_round_is_above_highest_sent() {
+        let output = idle(Some(pn(4, 1)), None, None).transition(
+            NodeId(1),
+            &nodes(),
+            ProposerEvent::ClientRequest { value: "x" },
+        );
+
+        assert_starts_round(output, pn(5, 1));
+    }
+
+    #[test]
+    fn next_round_is_above_highest_promise_received() {
+        let output = idle(Some(pn(4, 1)), Some(pn(7, 3)), None).transition(
+            NodeId(1),
+            &nodes(),
+            ProposerEvent::ClientRequest { value: "x" },
+        );
+
+        assert_starts_round(output, pn(8, 1));
+    }
+
+    #[test]
+    fn timeout_in_idle_retries_with_client_value() {
+        let output = idle(Some(pn(4, 1)), None, Some("x")).transition(
+            NodeId(1),
+            &nodes(),
+            ProposerEvent::Timeout,
+        );
+
+        assert_eq!(output.new_proposer_state.client_value, Some("x"));
+        assert_starts_round(output, pn(5, 1));
+    }
+
+    #[test]
+    fn timeout_in_idle_without_client_value_starts_learner_round() {
+        let output = idle(Some(pn(4, 1)), None, None).transition(
+            NodeId(1),
+            &nodes(),
+            ProposerEvent::Timeout,
+        );
+
+        assert_eq!(output.new_proposer_state.client_value, None);
+        assert_starts_round(output, pn(5, 1));
     }
 }
