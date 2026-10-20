@@ -27,7 +27,6 @@ pub enum ProposerPhase<V> {
     },
     Accept {
         value: V,
-        accepted: HashSet<NodeId>,
         rejected: HashSet<NodeId>,
     },
     Done {
@@ -38,6 +37,7 @@ pub enum ProposerPhase<V> {
 pub enum ProposerEvent<V> {
     ClientRequest { value: V },
     Message { from: NodeId, message: Message<V> },
+    Chosen { value: V },
     Timeout,
 }
 
@@ -110,7 +110,6 @@ impl<V: Clone> Proposer<V> {
                         Some(value) => (
                             ProposerPhase::Accept {
                                 value: value.clone(),
-                                accepted: HashSet::new(),
                                 rejected: HashSet::new(),
                             },
                             Some((
@@ -163,47 +162,11 @@ impl<V: Clone> Proposer<V> {
                     persist: false,
                 }
             }
-            (
-                ProposerEvent::Message {
-                    from,
-                    message:
-                        Message::Accepted {
-                            proposal_number, ..
-                        },
-                },
-                ProposerPhase::Accept {
-                    value,
-                    mut accepted,
-                    rejected,
-                },
-            ) if self
-                .highest_proposal_number_sent
-                .is_some_and(|sent| sent == proposal_number)
-                && !accepted.contains(&from) =>
-            {
-                accepted.insert(from);
-
-                self.phase = if accepted.len() * 2 <= nodes.len() {
-                    ProposerPhase::Accept {
-                        value,
-                        accepted,
-                        rejected,
-                    }
-                } else {
-                    ProposerPhase::Done { value }
-                };
-                ProposerOutput {
-                    new_proposer_state: self,
-                    send: None,
-                    persist: false,
-                }
-            }
             // Duplicates, replies from an old round, and replies that arrive
             // after the phase moved on are normal on a real network.
             (
                 ProposerEvent::Message {
-                    message:
-                        Message::Promise { .. } | Message::Reject { .. } | Message::Accepted { .. },
+                    message: Message::Promise { .. } | Message::Reject { .. },
                     ..
                 },
                 phase,
@@ -251,6 +214,14 @@ impl<V: Clone> Proposer<V> {
                 ProposerPhase::Prepare { .. } | ProposerPhase::Accept { .. },
             ) => {
                 self.phase = ProposerPhase::Idle;
+                ProposerOutput {
+                    new_proposer_state: self,
+                    send: None,
+                    persist: false,
+                }
+            }
+            (ProposerEvent::Chosen { value }, _) => {
+                self.phase = ProposerPhase::Done { value };
                 ProposerOutput {
                     new_proposer_state: self,
                     send: None,
@@ -495,7 +466,6 @@ mod tests {
             client_value: Some("x"),
             phase: ProposerPhase::Accept {
                 value: "y",
-                accepted: HashSet::new(),
                 rejected: HashSet::new(),
             },
         }
@@ -617,101 +587,54 @@ mod tests {
         ));
     }
 
-    fn accepted(
-        from: u32,
-        proposal_number: ProposalNumber,
-        value: &'static str,
-    ) -> ProposerEvent<&'static str> {
-        ProposerEvent::Message {
-            from: NodeId(from),
-            message: Message::Accepted {
-                proposal_number,
-                value,
-            },
-        }
+    fn chosen(value: &'static str) -> ProposerEvent<&'static str> {
+        ProposerEvent::Chosen { value }
     }
 
-    #[test]
-    fn accepted_in_accept_is_counted() {
-        let output = accepting().transition(NodeId(1), &nodes(), accepted(1, pn(4, 1), "y"));
-
+    fn assert_done(output: ProposerOutput<&'static str>, value: &'static str) {
         assert_eq!(output.send, None);
         assert!(!output.persist);
         assert!(matches!(
             output.new_proposer_state.phase,
-            ProposerPhase::Accept { accepted, .. } if accepted.len() == 1
+            ProposerPhase::Done { value: done } if done == value
         ));
     }
 
     #[test]
-    fn majority_of_accepted_is_done() {
-        let proposer = accepting()
-            .transition(NodeId(1), &nodes(), accepted(1, pn(4, 1), "y"))
-            .new_proposer_state;
-        let output = proposer.transition(NodeId(1), &nodes(), accepted(2, pn(4, 1), "y"));
-
-        assert_eq!(output.send, None);
-        assert!(!output.persist);
-        assert!(matches!(
-            output.new_proposer_state.phase,
-            ProposerPhase::Done { value: "y" }
-        ));
-    }
-
-    #[test]
-    fn repeated_accepted_from_one_node_counts_once() {
-        let proposer = accepting()
-            .transition(NodeId(1), &nodes(), accepted(2, pn(4, 1), "y"))
-            .new_proposer_state;
-        let output = proposer.transition(NodeId(1), &nodes(), accepted(2, pn(4, 1), "y"));
-
-        assert!(matches!(
-            output.new_proposer_state.phase,
-            ProposerPhase::Accept { accepted, .. } if accepted.len() == 1
-        ));
-    }
-
-    #[test]
-    fn accepted_for_another_round_is_ignored() {
-        let output = accepting().transition(NodeId(1), &nodes(), accepted(2, pn(3, 2), "z"));
-
-        assert_eq!(output.send, None);
-        assert!(!output.persist);
-        assert!(matches!(
-            output.new_proposer_state.phase,
-            ProposerPhase::Accept { accepted, .. } if accepted.is_empty()
-        ));
-    }
-
-    #[test]
-    fn accepted_in_prepare_is_ignored() {
+    fn chosen_in_idle_is_done() {
         let output =
-            preparing(Some("x")).transition(NodeId(1), &nodes(), accepted(2, pn(3, 2), "z"));
+            idle(Some(pn(4, 1)), None, Some("x")).transition(NodeId(1), &nodes(), chosen("y"));
 
-        assert_eq!(output.send, None);
-        assert!(!output.persist);
-        assert!(matches!(
-            output.new_proposer_state.phase,
-            ProposerPhase::Prepare { promised, .. } if promised.is_empty()
-        ));
+        assert_eq!(output.new_proposer_state.client_value, Some("x"));
+        assert_done(output, "y");
     }
 
     #[test]
-    fn accepted_in_idle_is_ignored() {
+    fn chosen_in_prepare_is_done() {
+        let output = preparing(Some("x")).transition(NodeId(1), &nodes(), chosen("y"));
+
+        assert_eq!(output.new_proposer_state.client_value, Some("x"));
+        assert_done(output, "y");
+    }
+
+    #[test]
+    fn chosen_in_accept_is_done() {
+        let output = accepting().transition(NodeId(1), &nodes(), chosen("y"));
+
+        assert_done(output, "y");
+    }
+
+    #[test]
+    fn chosen_in_done_stays_done() {
         let proposer: Proposer<&str> = Proposer {
             highest_proposal_number_sent: Some(pn(4, 1)),
             highest_promise_received: None,
             client_value: Some("x"),
-            phase: ProposerPhase::Idle,
+            phase: ProposerPhase::Done { value: "y" },
         };
-        let output = proposer.transition(NodeId(1), &nodes(), accepted(2, pn(4, 1), "y"));
+        let output = proposer.transition(NodeId(1), &nodes(), chosen("y"));
 
-        assert_eq!(output.send, None);
-        assert!(!output.persist);
-        assert!(matches!(
-            output.new_proposer_state.phase,
-            ProposerPhase::Idle
-        ));
+        assert_done(output, "y");
     }
 
     fn idle(

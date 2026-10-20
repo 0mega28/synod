@@ -5,7 +5,7 @@ pub struct NodeId(pub u32);
 
 // TODO: how to build a ProposalNumber (constructor vs pub fields, and who
 // picks the next round after a reject).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ProposalNumber {
     pub round: u32,
     pub node_id: NodeId,
