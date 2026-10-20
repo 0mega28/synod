@@ -246,6 +246,17 @@ impl<V: Clone> Proposer<V> {
                     persist: true,
                 }
             }
+            (
+                ProposerEvent::Timeout,
+                ProposerPhase::Prepare { .. } | ProposerPhase::Accept { .. },
+            ) => {
+                self.phase = ProposerPhase::Idle;
+                ProposerOutput {
+                    new_proposer_state: self,
+                    send: None,
+                    persist: false,
+                }
+            }
             (_, _) => todo!(),
         }
     }
@@ -793,6 +804,69 @@ mod tests {
         );
 
         assert_eq!(output.new_proposer_state.client_value, None);
+        assert_starts_round(output, pn(5, 1));
+    }
+
+    #[test]
+    fn timeout_in_prepare_goes_idle() {
+        let output = preparing(Some("x")).transition(NodeId(1), &nodes(), ProposerEvent::Timeout);
+
+        assert_eq!(output.send, None);
+        assert!(!output.persist);
+        assert!(matches!(
+            output.new_proposer_state.phase,
+            ProposerPhase::Idle
+        ));
+        assert_eq!(
+            output.new_proposer_state.highest_proposal_number_sent,
+            Some(pn(4, 1))
+        );
+        assert_eq!(output.new_proposer_state.client_value, Some("x"));
+    }
+
+    #[test]
+    fn timeout_in_accept_goes_idle() {
+        let output = accepting().transition(NodeId(1), &nodes(), ProposerEvent::Timeout);
+
+        assert_eq!(output.send, None);
+        assert!(!output.persist);
+        assert!(matches!(
+            output.new_proposer_state.phase,
+            ProposerPhase::Idle
+        ));
+        assert_eq!(
+            output.new_proposer_state.highest_proposal_number_sent,
+            Some(pn(4, 1))
+        );
+        assert_eq!(output.new_proposer_state.client_value, Some("x"));
+    }
+
+    #[test]
+    fn timeout_in_done_stays_done() {
+        let proposer: Proposer<&str> = Proposer {
+            highest_proposal_number_sent: Some(pn(4, 1)),
+            highest_promise_received: None,
+            client_value: Some("x"),
+            phase: ProposerPhase::Done { value: "y" },
+        };
+        let output = proposer.transition(NodeId(1), &nodes(), ProposerEvent::Timeout);
+
+        assert_eq!(output.send, None);
+        assert!(!output.persist);
+        assert!(matches!(
+            output.new_proposer_state.phase,
+            ProposerPhase::Done { value: "y" }
+        ));
+    }
+
+    #[test]
+    fn second_timeout_after_stalled_round_retries_higher() {
+        let proposer = preparing(Some("x"))
+            .transition(NodeId(1), &nodes(), ProposerEvent::Timeout)
+            .new_proposer_state;
+        let output = proposer.transition(NodeId(1), &nodes(), ProposerEvent::Timeout);
+
+        assert_eq!(output.new_proposer_state.client_value, Some("x"));
         assert_starts_round(output, pn(5, 1));
     }
 }
