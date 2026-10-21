@@ -1,7 +1,6 @@
 use crate::message::{
     AcceptedProposal, AcceptorMessage, LearnerMessage, ProposalNumber, ProposerMessage,
 };
-use std::cmp::Ordering;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Acceptor<V> {
@@ -20,46 +19,26 @@ pub struct AcceptorOutput<V> {
 }
 
 impl<V: Clone> Acceptor<V> {
-    pub fn transition(&self, message: AcceptorMessage<V>) -> AcceptorOutput<V> {
-        let Acceptor {
-            promised,
-            accepted_proposal,
-        } = self;
+    pub fn transition(mut self, message: AcceptorMessage<V>) -> AcceptorOutput<V> {
         match message {
             AcceptorMessage::Prepare { proposal_number } => {
-                if let Some(promised) = promised {
-                    return match promised.cmp(&proposal_number) {
-                        Ordering::Less | Ordering::Equal => AcceptorOutput {
-                            new_acceptor_state: Acceptor {
-                                promised: Some(proposal_number),
-                                accepted_proposal: accepted_proposal.clone(),
-                            },
-                            reply: Some(ProposerMessage::Promise {
-                                proposal_number,
-                                accepted: accepted_proposal.clone(),
-                            }),
-                            announce: None,
-                            persist: true,
-                        },
-                        Ordering::Greater => AcceptorOutput {
-                            new_acceptor_state: self.clone(),
-                            reply: Some(ProposerMessage::Reject {
-                                promised: *promised,
-                            }),
-                            announce: None,
-                            persist: false,
-                        },
+                if let Some(promised) = self.promised
+                    && promised > proposal_number
+                {
+                    return AcceptorOutput {
+                        new_acceptor_state: self,
+                        reply: Some(ProposerMessage::Reject { promised }),
+                        announce: None,
+                        persist: false,
                     };
                 }
+                self.promised = Some(proposal_number);
                 AcceptorOutput {
-                    new_acceptor_state: Acceptor {
-                        promised: Some(proposal_number),
-                        accepted_proposal: accepted_proposal.clone(),
-                    },
                     reply: Some(ProposerMessage::Promise {
                         proposal_number,
-                        accepted: accepted_proposal.clone(),
+                        accepted: self.accepted_proposal.clone(),
                     }),
+                    new_acceptor_state: self,
                     announce: None,
                     persist: true,
                 }
@@ -68,26 +47,23 @@ impl<V: Clone> Acceptor<V> {
                 proposal_number,
                 value,
             } => {
-                if let Some(promised) = promised
-                    && *promised > proposal_number
+                if let Some(promised) = self.promised
+                    && promised > proposal_number
                 {
                     return AcceptorOutput {
-                        new_acceptor_state: self.clone(),
-                        reply: Some(ProposerMessage::Reject {
-                            promised: *promised,
-                        }),
+                        new_acceptor_state: self,
+                        reply: Some(ProposerMessage::Reject { promised }),
                         announce: None,
                         persist: false,
                     };
                 }
+                self.promised = Some(proposal_number);
+                self.accepted_proposal = Some(AcceptedProposal {
+                    proposal_number,
+                    value: value.clone(),
+                });
                 AcceptorOutput {
-                    new_acceptor_state: Acceptor {
-                        promised: Some(proposal_number),
-                        accepted_proposal: Some(AcceptedProposal {
-                            proposal_number,
-                            value: value.clone(),
-                        }),
-                    },
+                    new_acceptor_state: self,
                     reply: None,
                     announce: Some(LearnerMessage::Accepted {
                         proposal_number,

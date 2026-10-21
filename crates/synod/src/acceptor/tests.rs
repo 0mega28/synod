@@ -48,7 +48,7 @@ fn lower_prepare_after_promise_is_rejected() {
     let acceptor = fresh();
 
     let acceptor = acceptor.transition(prepare(pn(2, 2))).new_acceptor_state;
-    let output = acceptor.transition(prepare(pn(1, 1)));
+    let output = acceptor.clone().transition(prepare(pn(1, 1)));
 
     assert_eq!(
         output.reply,
@@ -64,7 +64,7 @@ fn accept_below_promise_is_rejected() {
     let acceptor = fresh();
 
     let acceptor = acceptor.transition(prepare(pn(2, 2))).new_acceptor_state;
-    let output = acceptor.transition(accept(pn(1, 1), "x"));
+    let output = acceptor.clone().transition(accept(pn(1, 1), "x"));
 
     assert_eq!(
         output.reply,
