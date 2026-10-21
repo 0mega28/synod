@@ -20,7 +20,7 @@ fn proposer_adopts_highest_reported_value() {
             &nodes(),
             ProposerEvent::Message {
                 from: NodeId(1),
-                message: Message::Promise {
+                message: ProposerMessage::Promise {
                     proposal_number: pn(4, 1),
                     accepted: Some(AcceptedProposal {
                         proposal_number: pn(3, 2),
@@ -35,7 +35,7 @@ fn proposer_adopts_highest_reported_value() {
         &nodes(),
         ProposerEvent::Message {
             from: NodeId(2),
-            message: Message::Promise {
+            message: ProposerMessage::Promise {
                 proposal_number: pn(4, 1),
                 accepted: Some(AcceptedProposal {
                     proposal_number: pn(1, 1),
@@ -49,7 +49,7 @@ fn proposer_adopts_highest_reported_value() {
         output.send,
         Some((
             vec![NodeId(1), NodeId(2), NodeId(3)],
-            Message::Accept {
+            AcceptorMessage::Accept {
                 proposal_number: pn(4, 1),
                 value: "y",
             },
@@ -81,7 +81,7 @@ fn promise(
 ) -> ProposerEvent<&'static str> {
     ProposerEvent::Message {
         from: NodeId(from),
-        message: Message::Promise {
+        message: ProposerMessage::Promise {
             proposal_number: pn(4, 1),
             accepted,
         },
@@ -109,7 +109,7 @@ fn learner_round_adopts_reported_value() {
         output.send,
         Some((
             vec![NodeId(1), NodeId(2), NodeId(3)],
-            Message::Accept {
+            AcceptorMessage::Accept {
                 proposal_number: pn(4, 1),
                 value: "y",
             },
@@ -158,7 +158,7 @@ fn promise_for_old_round_is_ignored() {
         &nodes(),
         ProposerEvent::Message {
             from: NodeId(1),
-            message: Message::Promise {
+            message: ProposerMessage::Promise {
                 proposal_number: pn(3, 1),
                 accepted: None,
             },
@@ -204,7 +204,7 @@ fn proposer_adopts_highest_report_when_it_arrives_last() {
         output.send,
         Some((
             nodes(),
-            Message::Accept {
+            AcceptorMessage::Accept {
                 proposal_number: pn(4, 1),
                 value: "y",
             },
@@ -227,7 +227,7 @@ fn accepting() -> Proposer<&'static str> {
 fn reject(from: u32, promised: ProposalNumber) -> ProposerEvent<&'static str> {
     ProposerEvent::Message {
         from: NodeId(from),
-        message: Message::Reject { promised },
+        message: ProposerMessage::Reject { promised },
     }
 }
 
@@ -407,7 +407,7 @@ fn assert_starts_round(output: ProposerOutput<&'static str>, round: ProposalNumb
         output.send,
         Some((
             nodes(),
-            Message::Prepare {
+            AcceptorMessage::Prepare {
                 proposal_number: round
             }
         ))

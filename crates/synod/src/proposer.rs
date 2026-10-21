@@ -1,4 +1,4 @@
-use crate::message::{AcceptedProposal, Message, NodeId, ProposalNumber};
+use crate::message::{AcceptedProposal, AcceptorMessage, NodeId, ProposalNumber, ProposerMessage};
 use std::collections::HashSet;
 
 /// Phases: `Idle`, `Prepare`, `Accept`, `Done`.
@@ -35,9 +35,16 @@ pub enum ProposerPhase<V> {
 }
 
 pub enum ProposerEvent<V> {
-    ClientRequest { value: V },
-    Message { from: NodeId, message: Message<V> },
-    Chosen { value: V },
+    ClientRequest {
+        value: V,
+    },
+    Message {
+        from: NodeId,
+        message: ProposerMessage<V>,
+    },
+    Chosen {
+        value: V,
+    },
     Timeout,
 }
 
@@ -55,7 +62,7 @@ impl<V> ProposerPhase<V> {
 #[derive(Debug)]
 pub struct ProposerOutput<V> {
     pub new_proposer_state: Proposer<V>,
-    pub send: Option<(Vec<NodeId>, Message<V>)>,
+    pub send: Option<(Vec<NodeId>, AcceptorMessage<V>)>,
     pub persist: bool,
 }
 
@@ -71,7 +78,7 @@ impl<V: Clone> Proposer<V> {
                 ProposerEvent::Message {
                     from,
                     message:
-                        Message::Promise {
+                        ProposerMessage::Promise {
                             proposal_number,
                             accepted,
                         },
@@ -114,7 +121,7 @@ impl<V: Clone> Proposer<V> {
                             },
                             Some((
                                 nodes.to_vec(),
-                                Message::Accept {
+                                AcceptorMessage::Accept {
                                     proposal_number,
                                     value,
                                 },
@@ -136,7 +143,7 @@ impl<V: Clone> Proposer<V> {
             (
                 ProposerEvent::Message {
                     from,
-                    message: Message::Reject { promised },
+                    message: ProposerMessage::Reject { promised },
                 },
                 mut phase @ (ProposerPhase::Idle
                 | ProposerPhase::Prepare { .. }
@@ -166,7 +173,7 @@ impl<V: Clone> Proposer<V> {
             // after the phase moved on are normal on a real network.
             (
                 ProposerEvent::Message {
-                    message: Message::Promise { .. } | Message::Reject { .. },
+                    message: ProposerMessage::Promise { .. } | ProposerMessage::Reject { .. },
                     ..
                 },
                 phase,
@@ -202,7 +209,7 @@ impl<V: Clone> Proposer<V> {
                     new_proposer_state: self,
                     send: Some((
                         nodes.to_vec(),
-                        Message::Prepare {
+                        AcceptorMessage::Prepare {
                             proposal_number: new_proposal_number,
                         },
                     )),

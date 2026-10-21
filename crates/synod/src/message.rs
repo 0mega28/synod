@@ -31,11 +31,27 @@ pub struct AcceptedProposal<V> {
     pub value: V,
 }
 
+/// Wire messages, grouped by the role that receives them.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Message<V> {
+    ToAcceptor(AcceptorMessage<V>),
+    ToProposer(ProposerMessage<V>),
+    ToLearner(LearnerMessage<V>),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum AcceptorMessage<V> {
     Prepare {
         proposal_number: ProposalNumber,
     },
+    Accept {
+        proposal_number: ProposalNumber,
+        value: V,
+    },
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum ProposerMessage<V> {
     Promise {
         proposal_number: ProposalNumber,
         accepted: Option<AcceptedProposal<V>>,
@@ -43,25 +59,31 @@ pub enum Message<V> {
     Reject {
         promised: ProposalNumber,
     },
-    Accept {
-        proposal_number: ProposalNumber,
-        value: V,
-    },
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum LearnerMessage<V> {
     Accepted {
         proposal_number: ProposalNumber,
         value: V,
     },
 }
 
-impl<V> Message<V> {
-    pub fn kind(&self) -> &'static str {
-        match self {
-            Message::Prepare { .. } => "Prepare",
-            Message::Promise { .. } => "Promise",
-            Message::Reject { .. } => "Reject",
-            Message::Accept { .. } => "Accept",
-            Message::Accepted { .. } => "Accepted",
-        }
+impl<V> From<AcceptorMessage<V>> for Message<V> {
+    fn from(message: AcceptorMessage<V>) -> Self {
+        Message::ToAcceptor(message)
+    }
+}
+
+impl<V> From<ProposerMessage<V>> for Message<V> {
+    fn from(message: ProposerMessage<V>) -> Self {
+        Message::ToProposer(message)
+    }
+}
+
+impl<V> From<LearnerMessage<V>> for Message<V> {
+    fn from(message: LearnerMessage<V>) -> Self {
+        Message::ToLearner(message)
     }
 }
 

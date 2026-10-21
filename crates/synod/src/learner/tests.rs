@@ -19,7 +19,7 @@ fn feed(
         let output = learner.transition(
             &nodes(),
             NodeId(from),
-            Message::Accepted {
+            LearnerMessage::Accepted {
                 proposal_number: pn(round, node_id),
                 value,
             },

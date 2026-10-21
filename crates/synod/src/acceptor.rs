@@ -1,4 +1,6 @@
-use crate::message::{AcceptedProposal, Message, NodeId, ProposalNumber};
+use crate::message::{
+    AcceptedProposal, AcceptorMessage, LearnerMessage, ProposalNumber, ProposerMessage,
+};
 use std::cmp::Ordering;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -10,23 +12,21 @@ pub struct Acceptor<V> {
 #[derive(Debug)]
 pub struct AcceptorOutput<V> {
     pub new_acceptor_state: Acceptor<V>,
-    pub send: Option<(Vec<NodeId>, Message<V>)>,
+    /// Goes back to the sender of the message.
+    pub reply: Option<ProposerMessage<V>>,
+    /// Goes to every node.
+    pub announce: Option<LearnerMessage<V>>,
     pub persist: bool,
 }
 
 impl<V: Clone> Acceptor<V> {
-    pub fn transition(
-        &self,
-        nodes: &[NodeId],
-        sender_node_id: NodeId,
-        message: Message<V>,
-    ) -> AcceptorOutput<V> {
+    pub fn transition(&self, message: AcceptorMessage<V>) -> AcceptorOutput<V> {
         let Acceptor {
             promised,
             accepted_proposal,
         } = self;
         match message {
-            Message::Prepare { proposal_number } => {
+            AcceptorMessage::Prepare { proposal_number } => {
                 if let Some(promised) = promised {
                     return match promised.cmp(&proposal_number) {
                         Ordering::Less | Ordering::Equal => AcceptorOutput {
@@ -34,23 +34,19 @@ impl<V: Clone> Acceptor<V> {
                                 promised: Some(proposal_number),
                                 accepted_proposal: accepted_proposal.clone(),
                             },
-                            send: Some((
-                                vec![sender_node_id],
-                                Message::Promise {
-                                    proposal_number,
-                                    accepted: accepted_proposal.clone(),
-                                },
-                            )),
+                            reply: Some(ProposerMessage::Promise {
+                                proposal_number,
+                                accepted: accepted_proposal.clone(),
+                            }),
+                            announce: None,
                             persist: true,
                         },
                         Ordering::Greater => AcceptorOutput {
                             new_acceptor_state: self.clone(),
-                            send: Some((
-                                vec![sender_node_id],
-                                Message::Reject {
-                                    promised: *promised,
-                                },
-                            )),
+                            reply: Some(ProposerMessage::Reject {
+                                promised: *promised,
+                            }),
+                            announce: None,
                             persist: false,
                         },
                     };
@@ -60,17 +56,15 @@ impl<V: Clone> Acceptor<V> {
                         promised: Some(proposal_number),
                         accepted_proposal: accepted_proposal.clone(),
                     },
-                    send: Some((
-                        vec![sender_node_id],
-                        Message::Promise {
-                            proposal_number,
-                            accepted: accepted_proposal.clone(),
-                        },
-                    )),
+                    reply: Some(ProposerMessage::Promise {
+                        proposal_number,
+                        accepted: accepted_proposal.clone(),
+                    }),
+                    announce: None,
                     persist: true,
                 }
             }
-            Message::Accept {
+            AcceptorMessage::Accept {
                 proposal_number,
                 value,
             } => {
@@ -79,12 +73,10 @@ impl<V: Clone> Acceptor<V> {
                 {
                     return AcceptorOutput {
                         new_acceptor_state: self.clone(),
-                        send: Some((
-                            vec![sender_node_id],
-                            Message::Reject {
-                                promised: *promised,
-                            },
-                        )),
+                        reply: Some(ProposerMessage::Reject {
+                            promised: *promised,
+                        }),
+                        announce: None,
                         persist: false,
                     };
                 }
@@ -96,21 +88,13 @@ impl<V: Clone> Acceptor<V> {
                             value: value.clone(),
                         }),
                     },
-                    send: Some((
-                        nodes.to_vec(),
-                        Message::Accepted {
-                            proposal_number,
-                            value,
-                        },
-                    )),
+                    reply: None,
+                    announce: Some(LearnerMessage::Accepted {
+                        proposal_number,
+                        value,
+                    }),
                     persist: true,
                 }
-            }
-            _ => {
-                unreachable!(
-                    "Acceptor only handles Message::Prepare and Message::Accept, but received {}",
-                    message.kind()
-                );
             }
         }
     }
