@@ -256,6 +256,8 @@ fn majority_of_rejects_in_prepare_goes_idle() {
 
     assert_eq!(output.send, None);
     assert!(!output.persist);
+    // Round 4's timer is still pending and doubles as the retry delay.
+    assert_eq!(output.timer, None);
     assert!(matches!(
         output.new_proposer_state.phase,
         ProposerPhase::Idle
@@ -346,6 +348,7 @@ fn chosen(value: &'static str) -> ProposerEvent<&'static str> {
 
 fn assert_done(output: ProposerOutput<&'static str>, value: &'static str) {
     assert_eq!(output.send, None);
+    assert_eq!(output.timer, None);
     assert!(!output.persist);
     assert!(matches!(
         output.new_proposer_state.phase,
@@ -413,6 +416,7 @@ fn assert_starts_round(output: ProposerOutput<&'static str>, round: ProposalNumb
         ))
     );
     assert!(output.persist);
+    assert_eq!(output.timer, Some(round));
     assert_eq!(
         output.new_proposer_state.highest_proposal_number_sent,
         Some(round)
@@ -460,11 +464,8 @@ fn next_round_is_above_highest_promise_received() {
 
 #[test]
 fn timeout_in_idle_retries_with_client_value() {
-    let output = idle(Some(pn(4, 1)), None, Some("x")).transition(
-        NodeId(1),
-        &nodes(),
-        ProposerEvent::Timeout,
-    );
+    let output =
+        idle(Some(pn(4, 1)), None, Some("x")).transition(NodeId(1), &nodes(), timeout(pn(4, 1)));
 
     assert_eq!(output.new_proposer_state.client_value, Some("x"));
     assert_starts_round(output, pn(5, 1));
@@ -473,10 +474,11 @@ fn timeout_in_idle_retries_with_client_value() {
 #[test]
 fn timeout_in_idle_without_client_value_is_ignored() {
     let output =
-        idle(Some(pn(4, 1)), None, None).transition(NodeId(1), &nodes(), ProposerEvent::Timeout);
+        idle(Some(pn(4, 1)), None, None).transition(NodeId(1), &nodes(), timeout(pn(4, 1)));
 
     assert_eq!(output.send, None);
     assert!(!output.persist);
+    assert_eq!(output.timer, None);
     assert_eq!(
         output.new_proposer_state.highest_proposal_number_sent,
         Some(pn(4, 1))
@@ -555,10 +557,11 @@ fn learn_in_done_stays_done() {
 
 #[test]
 fn timeout_in_prepare_goes_idle() {
-    let output = preparing(Some("x")).transition(NodeId(1), &nodes(), ProposerEvent::Timeout);
+    let output = preparing(Some("x")).transition(NodeId(1), &nodes(), timeout(pn(4, 1)));
 
     assert_eq!(output.send, None);
     assert!(!output.persist);
+    assert_eq!(output.timer, Some(pn(4, 1)));
     assert!(matches!(
         output.new_proposer_state.phase,
         ProposerPhase::Idle
@@ -572,10 +575,11 @@ fn timeout_in_prepare_goes_idle() {
 
 #[test]
 fn timeout_in_accept_goes_idle() {
-    let output = accepting().transition(NodeId(1), &nodes(), ProposerEvent::Timeout);
+    let output = accepting().transition(NodeId(1), &nodes(), timeout(pn(4, 1)));
 
     assert_eq!(output.send, None);
     assert!(!output.persist);
+    assert_eq!(output.timer, Some(pn(4, 1)));
     assert!(matches!(
         output.new_proposer_state.phase,
         ProposerPhase::Idle
@@ -595,7 +599,7 @@ fn timeout_in_done_stays_done() {
         client_value: Some("x"),
         phase: ProposerPhase::Done { value: "y" },
     };
-    let output = proposer.transition(NodeId(1), &nodes(), ProposerEvent::Timeout);
+    let output = proposer.transition(NodeId(1), &nodes(), timeout(pn(4, 1)));
 
     assert_eq!(output.send, None);
     assert!(!output.persist);
@@ -608,10 +612,72 @@ fn timeout_in_done_stays_done() {
 #[test]
 fn second_timeout_after_stalled_round_retries_higher() {
     let proposer = preparing(Some("x"))
-        .transition(NodeId(1), &nodes(), ProposerEvent::Timeout)
+        .transition(NodeId(1), &nodes(), timeout(pn(4, 1)))
         .new_proposer_state;
-    let output = proposer.transition(NodeId(1), &nodes(), ProposerEvent::Timeout);
+    let output = proposer.transition(NodeId(1), &nodes(), timeout(pn(4, 1)));
 
     assert_eq!(output.new_proposer_state.client_value, Some("x"));
     assert_starts_round(output, pn(5, 1));
+}
+
+fn timeout(proposal_number: ProposalNumber) -> ProposerEvent<&'static str> {
+    ProposerEvent::Timeout { proposal_number }
+}
+
+#[test]
+fn reaching_accept_requests_no_new_timer() {
+    let proposer = preparing(Some("x"))
+        .transition(NodeId(1), &nodes(), promise(1, None))
+        .new_proposer_state;
+    let output = proposer.transition(NodeId(1), &nodes(), promise(2, None));
+
+    assert!(matches!(
+        output.new_proposer_state.phase,
+        ProposerPhase::Accept { .. }
+    ));
+    assert_eq!(output.timer, None);
+}
+
+#[test]
+fn stale_timeout_in_prepare_is_ignored() {
+    let output = preparing(Some("x")).transition(NodeId(1), &nodes(), timeout(pn(3, 1)));
+
+    assert_eq!(output.send, None);
+    assert!(!output.persist);
+    assert_eq!(output.timer, None);
+    assert!(matches!(
+        output.new_proposer_state.phase,
+        ProposerPhase::Prepare { .. }
+    ));
+}
+
+#[test]
+fn stale_timeout_in_accept_is_ignored() {
+    let output = accepting().transition(NodeId(1), &nodes(), timeout(pn(3, 1)));
+
+    assert_eq!(output.send, None);
+    assert_eq!(output.timer, None);
+    assert!(matches!(
+        output.new_proposer_state.phase,
+        ProposerPhase::Accept { value: "y", .. }
+    ));
+}
+
+#[test]
+fn stale_timeout_in_idle_does_not_retry() {
+    // Round 5 went idle after rejects; a leftover timer from round 4 fires.
+    let output =
+        idle(Some(pn(5, 1)), None, Some("x")).transition(NodeId(1), &nodes(), timeout(pn(4, 1)));
+
+    assert_eq!(output.send, None);
+    assert!(!output.persist);
+    assert_eq!(output.timer, None);
+    assert_eq!(
+        output.new_proposer_state.highest_proposal_number_sent,
+        Some(pn(5, 1))
+    );
+    assert!(matches!(
+        output.new_proposer_state.phase,
+        ProposerPhase::Idle
+    ));
 }

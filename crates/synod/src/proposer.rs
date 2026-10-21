@@ -45,7 +45,9 @@ pub enum ProposerEvent<V> {
     Chosen {
         value: V,
     },
-    Timeout,
+    Timeout {
+        proposal_number: ProposalNumber,
+    },
     // TODO: Node sends Learn once at startup. Retrying it while the learner
     // has chosen nothing needs a policy once messages can be lost (M2).
     Learn,
@@ -66,6 +68,7 @@ impl<V> ProposerPhase<V> {
 pub struct ProposerOutput<V> {
     pub new_proposer_state: Proposer<V>,
     pub send: Option<(Vec<NodeId>, AcceptorMessage<V>)>,
+    pub timer: Option<ProposalNumber>,
     pub persist: bool,
 }
 
@@ -138,6 +141,7 @@ impl<V: Clone> Proposer<V> {
                 ProposerOutput {
                     new_proposer_state: self,
                     send,
+                    timer: None,
                     persist: false,
                 }
             }
@@ -169,6 +173,7 @@ impl<V: Clone> Proposer<V> {
                 ProposerOutput {
                     new_proposer_state: self,
                     send: None,
+                    timer: None,
                     persist: false,
                 }
             }
@@ -191,10 +196,21 @@ impl<V: Clone> Proposer<V> {
                 ProposerOutput {
                     new_proposer_state: self,
                     send: None,
+                    timer: None,
                     persist: false,
                 }
             }
-            (ProposerEvent::Timeout, phase @ ProposerPhase::Idle)
+            (ProposerEvent::Timeout { proposal_number }, phase)
+                if Some(proposal_number) != self.highest_proposal_number_sent => {
+                self.phase = phase;
+                ProposerOutput {
+                    new_proposer_state: self,
+                    send: None,
+                    timer: None,
+                    persist: false,
+                }
+            }
+            (ProposerEvent::Timeout { .. }, phase @ ProposerPhase::Idle)
                 if self.client_value.is_none() =>
             {
                 // Nothing to retry; learning is triggered by Learn, not by a timeout.
@@ -202,11 +218,12 @@ impl<V: Clone> Proposer<V> {
                 ProposerOutput {
                     new_proposer_state: self,
                     send: None,
+                    timer: None,
                     persist: false,
                 }
             }
             (
-                event @ (ProposerEvent::ClientRequest { .. } | ProposerEvent::Timeout | ProposerEvent::Learn),
+                event @ (ProposerEvent::ClientRequest { .. } | ProposerEvent::Timeout { .. } | ProposerEvent::Learn),
                 ProposerPhase::Idle,
             ) => {
                 if let ProposerEvent::ClientRequest { value } = event {
@@ -232,17 +249,19 @@ impl<V: Clone> Proposer<V> {
                             proposal_number: new_proposal_number,
                         },
                     )),
+                    timer: Some(new_proposal_number),
                     persist: true,
                 }
             }
             (
-                ProposerEvent::Timeout,
+                ProposerEvent::Timeout { proposal_number },
                 ProposerPhase::Prepare { .. } | ProposerPhase::Accept { .. },
             ) => {
                 self.phase = ProposerPhase::Idle;
                 ProposerOutput {
                     new_proposer_state: self,
                     send: None,
+                    timer: Some(proposal_number),
                     persist: false,
                 }
             }
@@ -251,6 +270,7 @@ impl<V: Clone> Proposer<V> {
                 ProposerOutput {
                     new_proposer_state: self,
                     send: None,
+                    timer: None,
                     persist: false,
                 }
             }
