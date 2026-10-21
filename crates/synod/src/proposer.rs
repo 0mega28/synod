@@ -46,6 +46,9 @@ pub enum ProposerEvent<V> {
         value: V,
     },
     Timeout,
+    // TODO: Node sends Learn once at startup. Retrying it while the learner
+    // has chosen nothing needs a policy once messages can be lost (M2).
+    Learn,
 }
 
 impl<V> ProposerPhase<V> {
@@ -178,6 +181,11 @@ impl<V: Clone> Proposer<V> {
                 },
                 phase,
             )
+            // TODO(multi-decree): inform client that the request is rejected
+            | (
+                ProposerEvent::ClientRequest { .. } | ProposerEvent::Learn,
+                phase @ (ProposerPhase::Prepare { .. } | ProposerPhase::Accept { .. }),
+            )
             | (_, phase @ ProposerPhase::Done { .. }) => {
                 self.phase = phase;
                 ProposerOutput {
@@ -186,8 +194,19 @@ impl<V: Clone> Proposer<V> {
                     persist: false,
                 }
             }
+            (ProposerEvent::Timeout, phase @ ProposerPhase::Idle)
+                if self.client_value.is_none() =>
+            {
+                // Nothing to retry; learning is triggered by Learn, not by a timeout.
+                self.phase = phase;
+                ProposerOutput {
+                    new_proposer_state: self,
+                    send: None,
+                    persist: false,
+                }
+            }
             (
-                event @ (ProposerEvent::ClientRequest { .. } | ProposerEvent::Timeout),
+                event @ (ProposerEvent::ClientRequest { .. } | ProposerEvent::Timeout | ProposerEvent::Learn),
                 ProposerPhase::Idle,
             ) => {
                 if let ProposerEvent::ClientRequest { value } = event {
@@ -235,7 +254,6 @@ impl<V: Clone> Proposer<V> {
                     persist: false,
                 }
             }
-            (_, _) => todo!(),
         }
     }
 

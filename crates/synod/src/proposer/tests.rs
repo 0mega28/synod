@@ -471,12 +471,86 @@ fn timeout_in_idle_retries_with_client_value() {
 }
 
 #[test]
-fn timeout_in_idle_without_client_value_starts_learner_round() {
+fn timeout_in_idle_without_client_value_is_ignored() {
     let output =
         idle(Some(pn(4, 1)), None, None).transition(NodeId(1), &nodes(), ProposerEvent::Timeout);
 
+    assert_eq!(output.send, None);
+    assert!(!output.persist);
+    assert_eq!(
+        output.new_proposer_state.highest_proposal_number_sent,
+        Some(pn(4, 1))
+    );
+    assert!(matches!(
+        output.new_proposer_state.phase,
+        ProposerPhase::Idle
+    ));
+}
+
+#[test]
+fn learn_on_fresh_proposer_starts_round_one() {
+    let output = idle(None, None, None).transition(NodeId(1), &nodes(), ProposerEvent::Learn);
+
     assert_eq!(output.new_proposer_state.client_value, None);
+    assert_starts_round(output, pn(1, 1));
+}
+
+#[test]
+fn learn_after_restart_starts_round_above_persisted_one() {
+    let output =
+        idle(Some(pn(4, 1)), None, None).transition(NodeId(1), &nodes(), ProposerEvent::Learn);
+
     assert_starts_round(output, pn(5, 1));
+}
+
+#[test]
+fn learn_in_idle_keeps_client_value() {
+    let output =
+        idle(Some(pn(4, 1)), None, Some("x")).transition(NodeId(1), &nodes(), ProposerEvent::Learn);
+
+    assert_eq!(output.new_proposer_state.client_value, Some("x"));
+    assert_starts_round(output, pn(5, 1));
+}
+
+#[test]
+fn learn_while_preparing_is_ignored() {
+    let output = preparing(Some("x")).transition(NodeId(1), &nodes(), ProposerEvent::Learn);
+
+    assert_eq!(output.send, None);
+    assert!(!output.persist);
+    assert_eq!(
+        output.new_proposer_state.highest_proposal_number_sent,
+        Some(pn(4, 1))
+    );
+    assert!(matches!(
+        output.new_proposer_state.phase,
+        ProposerPhase::Prepare { .. }
+    ));
+}
+
+#[test]
+fn learn_while_accepting_is_ignored() {
+    let output = accepting().transition(NodeId(1), &nodes(), ProposerEvent::Learn);
+
+    assert_eq!(output.send, None);
+    assert!(!output.persist);
+    assert!(matches!(
+        output.new_proposer_state.phase,
+        ProposerPhase::Accept { value: "y", .. }
+    ));
+}
+
+#[test]
+fn learn_in_done_stays_done() {
+    let proposer: Proposer<&str> = Proposer {
+        highest_proposal_number_sent: Some(pn(4, 1)),
+        highest_promise_received: None,
+        client_value: Some("x"),
+        phase: ProposerPhase::Done { value: "y" },
+    };
+    let output = proposer.transition(NodeId(1), &nodes(), ProposerEvent::Learn);
+
+    assert_done(output, "y");
 }
 
 #[test]
