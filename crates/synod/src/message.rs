@@ -32,14 +32,14 @@ pub struct AcceptedProposal<V> {
 }
 
 /// Wire messages, grouped by the role that receives them.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Message<V> {
     ToAcceptor(AcceptorMessage<V>),
     ToProposer(ProposerMessage<V>),
     ToLearner(LearnerMessage<V>),
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AcceptorMessage<V> {
     Prepare {
         proposal_number: ProposalNumber,
@@ -50,7 +50,7 @@ pub enum AcceptorMessage<V> {
     },
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProposerMessage<V> {
     Promise {
         proposal_number: ProposalNumber,
@@ -61,7 +61,7 @@ pub enum ProposerMessage<V> {
     },
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LearnerMessage<V> {
     Accepted {
         proposal_number: ProposalNumber,

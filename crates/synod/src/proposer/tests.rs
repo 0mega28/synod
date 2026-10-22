@@ -361,6 +361,7 @@ fn chosen_in_idle_is_done() {
     let output = idle(Some(pn(4, 1)), None, Some("x")).transition(NodeId(1), &nodes(), chosen("y"));
 
     assert_eq!(output.new_proposer_state.client_value, Some("x"));
+    assert_eq!(output.done, Some("y"));
     assert_done(output, "y");
 }
 
@@ -369,6 +370,7 @@ fn chosen_in_prepare_is_done() {
     let output = preparing(Some("x")).transition(NodeId(1), &nodes(), chosen("y"));
 
     assert_eq!(output.new_proposer_state.client_value, Some("x"));
+    assert_eq!(output.done, Some("y"));
     assert_done(output, "y");
 }
 
@@ -376,6 +378,7 @@ fn chosen_in_prepare_is_done() {
 fn chosen_in_accept_is_done() {
     let output = accepting().transition(NodeId(1), &nodes(), chosen("y"));
 
+    assert_eq!(output.done, Some("y"));
     assert_done(output, "y");
 }
 
@@ -389,6 +392,7 @@ fn chosen_in_done_stays_done() {
     };
     let output = proposer.transition(NodeId(1), &nodes(), chosen("y"));
 
+    assert_eq!(output.done, None);
     assert_done(output, "y");
 }
 
@@ -552,6 +556,7 @@ fn learn_in_done_stays_done() {
     };
     let output = proposer.transition(NodeId(1), &nodes(), ProposerEvent::Learn);
 
+    assert_eq!(output.done, None);
     assert_done(output, "y");
 }
 

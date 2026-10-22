@@ -70,6 +70,8 @@ pub struct ProposerOutput<V> {
     pub send: Option<(Vec<NodeId>, AcceptorMessage<V>)>,
     pub timer: Option<ProposalNumber>,
     pub persist: bool,
+    /// The value, on the transition that moves the proposer to `Done`.
+    pub done: Option<V>,
 }
 
 impl<V: Clone> Proposer<V> {
@@ -143,6 +145,7 @@ impl<V: Clone> Proposer<V> {
                     send,
                     timer: None,
                     persist: false,
+                    done: None,
                 }
             }
             // An acceptor rejects round n only after promising something higher,
@@ -175,6 +178,7 @@ impl<V: Clone> Proposer<V> {
                     send: None,
                     timer: None,
                     persist: false,
+                    done: None,
                 }
             }
             // Duplicates, replies from an old round, and replies that arrive
@@ -198,6 +202,7 @@ impl<V: Clone> Proposer<V> {
                     send: None,
                     timer: None,
                     persist: false,
+                    done: None,
                 }
             }
             (ProposerEvent::Timeout { proposal_number }, phase)
@@ -208,6 +213,7 @@ impl<V: Clone> Proposer<V> {
                     send: None,
                     timer: None,
                     persist: false,
+                    done: None,
                 }
             }
             (ProposerEvent::Timeout { .. }, phase @ ProposerPhase::Idle)
@@ -220,6 +226,7 @@ impl<V: Clone> Proposer<V> {
                     send: None,
                     timer: None,
                     persist: false,
+                    done: None,
                 }
             }
             (
@@ -251,6 +258,7 @@ impl<V: Clone> Proposer<V> {
                     )),
                     timer: Some(new_proposal_number),
                     persist: true,
+                    done: None,
                 }
             }
             (
@@ -263,15 +271,19 @@ impl<V: Clone> Proposer<V> {
                     send: None,
                     timer: Some(proposal_number),
                     persist: false,
+                    done: None,
                 }
             }
             (ProposerEvent::Chosen { value }, _) => {
-                self.phase = ProposerPhase::Done { value };
+                self.phase = ProposerPhase::Done {
+                    value: value.clone(),
+                };
                 ProposerOutput {
                     new_proposer_state: self,
                     send: None,
                     timer: None,
                     persist: false,
+                    done: Some(value),
                 }
             }
         }
