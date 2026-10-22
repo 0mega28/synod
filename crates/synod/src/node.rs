@@ -29,7 +29,7 @@ pub enum Persist {
 pub struct NodeOutput<V> {
     pub new_node_state: Node<V>,
     pub messages: Vec<(NodeId, Message<V>)>,
-    pub client_response: Option<V>,
+    pub done: Option<V>,
     pub persist: Option<Persist>,
     pub timer: Option<ProposalNumber>,
 }
@@ -83,7 +83,7 @@ impl<V: Clone + Eq> Node<V> {
         NodeOutput {
             new_node_state: self,
             messages,
-            client_response: None,
+            done: None,
             persist: persist.then_some(Persist::Acceptor),
             timer: None,
         }
@@ -113,7 +113,7 @@ impl<V: Clone + Eq> Node<V> {
         NodeOutput {
             new_node_state: self,
             messages,
-            client_response: done,
+            done,
             persist: persist.then_some(Persist::Proposer),
             timer,
         }
@@ -132,7 +132,7 @@ impl<V: Clone + Eq> Node<V> {
         NodeOutput {
             new_node_state: self,
             messages: vec![],
-            client_response: None,
+            done: None,
             persist: None,
             timer: None,
         }

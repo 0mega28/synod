@@ -87,7 +87,7 @@ fn client_request_sends_prepare_to_every_node() {
     );
     assert!(matches!(output.persist, Some(Persist::Proposer)));
     assert_eq!(output.timer, Some(pn(1, 1)));
-    assert_eq!(output.client_response, None);
+    assert_eq!(output.done, None);
     assert_eq!(output.new_node_state.proposer.client_value, Some("x"));
 }
 
@@ -233,7 +233,7 @@ fn accepted_below_majority_reports_nothing() {
     let output = preparing().transition(accepted(1, "x"));
 
     assert!(output.messages.is_empty());
-    assert_eq!(output.client_response, None);
+    assert_eq!(output.done, None);
     assert_eq!(output.new_node_state.learner.chosen, None);
 }
 
@@ -245,7 +245,7 @@ fn chosen_value_is_reported_and_moves_proposer_to_done() {
     assert!(output.messages.is_empty());
     assert!(output.persist.is_none());
     assert_eq!(output.timer, None);
-    assert_eq!(output.client_response, Some("x"));
+    assert_eq!(output.done, Some("x"));
     assert_eq!(output.new_node_state.learner.chosen, Some("x"));
     assert!(matches!(
         output.new_node_state.proposer.phase,
@@ -262,7 +262,7 @@ fn chosen_value_is_reported_once() {
         .new_node_state;
     let output = node.transition(accepted(3, "x"));
 
-    assert_eq!(output.client_response, None);
+    assert_eq!(output.done, None);
     assert_eq!(output.new_node_state.learner.chosen, Some("x"));
 }
 
@@ -278,7 +278,7 @@ fn chosen_value_is_not_reported_again_after_done() {
         proposal_number: pn(1, 1),
     });
 
-    assert_eq!(output.client_response, None);
+    assert_eq!(output.done, None);
     assert!(output.messages.is_empty());
     assert!(matches!(
         output.new_node_state.proposer.phase,

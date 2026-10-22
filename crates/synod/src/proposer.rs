@@ -118,6 +118,9 @@ impl<V: Clone> Proposer<V> {
                         None,
                     )
                 } else {
+                    // TODO(multi-decree): adopting a reported value just says the client
+                    // request is dropped for this round, it doesn't mean the reported value
+                    // is going to be chosen, and the client value can still win a later round.
                     match highest_proposal_received
                         .map(|p| p.value)
                         .or_else(|| self.client_value.clone())
