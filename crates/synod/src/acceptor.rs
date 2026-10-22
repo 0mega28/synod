@@ -64,8 +64,15 @@ impl<V: Clone + Eq> Acceptor<V> {
                 {
                     assert!(accepted_proposal.value == value);
                 }
-                let persist = self.promised != Some(proposal_number)
-                    || self.accepted_proposal.map(|p| p.proposal_number) != Some(proposal_number);
+                assert!(
+                    self.accepted_proposal.as_ref().map(|p| p.proposal_number) <= self.promised,
+                    "accepted proposal is above the promise"
+                );
+                // Only the accepted number needs comparing: accepted is always <= promised,
+                // and the guard above means promised <= proposal_number, so if accepted is
+                // already proposal_number, promised is too.
+                let persist =
+                    self.accepted_proposal.map(|p| p.proposal_number) != Some(proposal_number);
 
                 self.promised = Some(proposal_number);
                 self.accepted_proposal = Some(AcceptedProposal {
