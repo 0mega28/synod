@@ -147,3 +147,29 @@ fn duplicate_prepare_is_promised_again() {
     );
     assert_eq!(output.announce, None);
 }
+
+#[test]
+fn duplicate_prepare_is_not_persisted() {
+    let acceptor = fresh().transition(prepare(pn(1, 1))).new_acceptor_state;
+    let output = acceptor.transition(prepare(pn(1, 1)));
+
+    assert!(!output.persist);
+}
+
+#[test]
+fn duplicate_accept_is_announced_but_not_persisted() {
+    let acceptor = fresh().transition(prepare(pn(1, 1))).new_acceptor_state;
+    let acceptor = acceptor
+        .transition(accept(pn(1, 1), "x"))
+        .new_acceptor_state;
+    let output = acceptor.transition(accept(pn(1, 1), "x"));
+
+    assert_eq!(
+        output.announce,
+        Some(LearnerMessage::Accepted {
+            proposal_number: pn(1, 1),
+            value: "x",
+        })
+    );
+    assert!(!output.persist);
+}

@@ -18,7 +18,7 @@ pub struct AcceptorOutput<V> {
     pub persist: bool,
 }
 
-impl<V: Clone> Acceptor<V> {
+impl<V: Clone + Eq> Acceptor<V> {
     pub fn transition(mut self, message: AcceptorMessage<V>) -> AcceptorOutput<V> {
         match message {
             AcceptorMessage::Prepare { proposal_number } => {
@@ -32,6 +32,7 @@ impl<V: Clone> Acceptor<V> {
                         persist: false,
                     };
                 }
+                let persist = self.promised != Some(proposal_number);
                 self.promised = Some(proposal_number);
                 AcceptorOutput {
                     reply: Some(ProposerMessage::Promise {
@@ -40,7 +41,7 @@ impl<V: Clone> Acceptor<V> {
                     }),
                     new_acceptor_state: self,
                     announce: None,
-                    persist: true,
+                    persist,
                 }
             }
             AcceptorMessage::Accept {
@@ -57,6 +58,15 @@ impl<V: Clone> Acceptor<V> {
                         persist: false,
                     };
                 }
+                // TODO: revisit whether to assert or ignore the message.
+                if let Some(accepted_proposal) = &self.accepted_proposal
+                    && accepted_proposal.proposal_number == proposal_number
+                {
+                    assert!(accepted_proposal.value == value);
+                }
+                let persist = self.promised != Some(proposal_number)
+                    || self.accepted_proposal.map(|p| p.proposal_number) != Some(proposal_number);
+
                 self.promised = Some(proposal_number);
                 self.accepted_proposal = Some(AcceptedProposal {
                     proposal_number,
@@ -69,7 +79,7 @@ impl<V: Clone> Acceptor<V> {
                         proposal_number,
                         value,
                     }),
-                    persist: true,
+                    persist,
                 }
             }
         }
