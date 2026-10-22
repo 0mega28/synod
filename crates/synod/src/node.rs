@@ -35,6 +35,16 @@ pub struct NodeOutput<V> {
 }
 
 impl<V: Clone + Eq> Node<V> {
+    pub fn new(id: NodeId, nodes: Vec<NodeId>) -> Self {
+        Self {
+            acceptor: Acceptor::new(),
+            proposer: Proposer::new(),
+            learner: Learner::new(),
+            id,
+            nodes,
+        }
+    }
+
     pub fn transition(self, event: NodeEvent<V>) -> NodeOutput<V> {
         match event {
             NodeEvent::Message {

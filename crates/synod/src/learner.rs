@@ -20,6 +20,13 @@ pub struct LearnerOutput<V> {
 }
 
 impl<V: Clone + Eq> Learner<V> {
+    pub(crate) fn new() -> Self {
+        Self {
+            votes: HashMap::new(),
+            chosen: None,
+        }
+    }
+
     pub fn transition(
         mut self,
         nodes: &[NodeId],

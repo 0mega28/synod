@@ -301,6 +301,15 @@ impl<V: Clone> Proposer<V> {
             node_id: own_id,
         }
     }
+
+    pub(crate) fn new() -> Self {
+        Self {
+            highest_proposal_number_sent: None,
+            highest_promise_received: None,
+            client_value: None,
+            phase: ProposerPhase::Idle,
+        }
+    }
 }
 
 #[cfg(test)]

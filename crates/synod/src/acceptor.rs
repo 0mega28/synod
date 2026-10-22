@@ -19,6 +19,13 @@ pub struct AcceptorOutput<V> {
 }
 
 impl<V: Clone + Eq> Acceptor<V> {
+    pub(crate) fn new() -> Self {
+        Self {
+            promised: None,
+            accepted_proposal: None,
+        }
+    }
+
     pub fn transition(mut self, message: AcceptorMessage<V>) -> AcceptorOutput<V> {
         match message {
             AcceptorMessage::Prepare { proposal_number } => {
